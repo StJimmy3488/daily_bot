@@ -10,8 +10,15 @@ WEEKDAY_SHORT = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
 
 
 class TaskCb(CallbackData, prefix="t"):
-    action: str  # done | drop | today | tomorrow | pick | back
+    action: str  # done | drop | today | tomorrow | pick | back | snooze
     id: int
+    minutes: int = 0  # for snooze
+
+
+class PlanCb(CallbackData, prefix="pl"):
+    action: str  # accept | edit | toggle
+    day: int  # date.toordinal(), so a stale brief can't touch another day
+    id: int = 0  # task id for toggle
 
 
 class PickCb(CallbackData, prefix="p"):
@@ -39,6 +46,56 @@ def task_kb(task: Task) -> InlineKeyboardMarkup:
         b.button(text="🗑", callback_data=TaskCb(action="drop", id=task.id))
         b.adjust(4)
     return b.as_markup()
+
+
+def ping_kb(task: Task) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Done", callback_data=TaskCb(action="done", id=task.id))
+    b.button(text="+30 min", callback_data=TaskCb(action="snooze", id=task.id, minutes=30))
+    b.button(text="+2 h", callback_data=TaskCb(action="snooze", id=task.id, minutes=120))
+    b.button(text="➡️ Tomorrow", callback_data=TaskCb(action="tomorrow", id=task.id))
+    b.adjust(4)
+    return b.as_markup()
+
+
+def review_kb(task: Task) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Done", callback_data=TaskCb(action="done", id=task.id))
+    b.button(text="➡️ Tomorrow", callback_data=TaskCb(action="tomorrow", id=task.id))
+    b.button(text="🗑 Drop", callback_data=TaskCb(action="drop", id=task.id))
+    return b.as_markup()
+
+
+def brief_kb(day: date) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Accept plan", callback_data=PlanCb(action="accept", day=day.toordinal()))
+    b.button(text="✏️ Edit", callback_data=PlanCb(action="edit", day=day.toordinal()))
+    return b.as_markup()
+
+
+def plan_edit_kb(day: date, proposed: list[Task], selected: set[int]) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for task in proposed:
+        mark = "☑️" if task.id in selected else "⬜️"
+        title = task.title if len(task.title) <= 32 else task.title[:31] + "…"
+        b.button(text=f"{mark} {title}", callback_data=PlanCb(action="toggle", day=day.toordinal(), id=task.id))
+    b.button(text=f"✅ Accept ({len(selected)})", callback_data=PlanCb(action="accept", day=day.toordinal()))
+    b.adjust(1)
+    return b.as_markup()
+
+
+def plan_ids_from_markup(markup: InlineKeyboardMarkup | None) -> list[int]:
+    """The proposed task ids, recovered from the toggle buttons of an edit keyboard."""
+    if markup is None:
+        return []
+    ids = []
+    for row in markup.inline_keyboard:
+        for button in row:
+            if (button.callback_data or "").startswith(PlanCb.__prefix__ + ":"):
+                cb = PlanCb.unpack(button.callback_data)
+                if cb.action == "toggle":
+                    ids.append(cb.id)
+    return ids
 
 
 def pick_date_kb(task_id: int, today: date) -> InlineKeyboardMarkup:

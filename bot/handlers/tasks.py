@@ -4,9 +4,11 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from bot.clock import utcnow
 from bot.db.models import TaskStatus
 from bot.formatting import format_closed, format_task
 from bot.keyboards import PickCb, TaskCb, pick_date_kb, task_kb
+from bot.planning import day_summary_if_closed
 from bot.repo import TaskRepo
 
 router = Router()
@@ -60,12 +62,25 @@ async def on_task_action(query: CallbackQuery, callback_data: TaskCb, repo: Task
             await repo.reschedule(task, today + timedelta(days=offset))
             await query.message.edit_text(format_task(task, today), reply_markup=task_kb(task))
             await query.answer(f"Moved to {callback_data.action}")
+        case "snooze":
+            await repo.snooze(task, callback_data.minutes)
+            until = utcnow() + timedelta(minutes=callback_data.minutes)
+            await query.message.edit_text(
+                f"{format_task(task, today)}\n💤 snoozed until {until.astimezone(repo.tz):%H:%M}",
+                reply_markup=task_kb(task),
+            )
+            await query.answer("Snoozed")
         case "pick":
             await query.message.edit_reply_markup(reply_markup=pick_date_kb(task.id, today))
             await query.answer()
         case "back":
             await query.message.edit_reply_markup(reply_markup=task_kb(task))
             await query.answer()
+
+    if callback_data.action in {"done", "drop", "tomorrow"} and (
+        summary := await day_summary_if_closed(repo, task, today)
+    ):
+        await query.message.answer(summary)
 
 
 @router.callback_query(PickCb.filter())

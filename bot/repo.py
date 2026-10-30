@@ -1,21 +1,46 @@
-from datetime import date, time
+from datetime import date, time, timedelta
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.clock import utcnow
-from bot.db.models import Event, Task, TaskStatus
+from bot.clock import day_bounds_utc, local_to_utc, utcnow
+from bot.db.models import DayPlan, Event, Reminder, Task, TaskStatus
 
 
 class TaskRepo:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, tz: ZoneInfo):
         self.session = session
+        self.tz = tz
 
     async def _log(self, task: Task, action: str, payload: dict | None = None) -> None:
         self.session.add(Event(task_id=task.id, action=action, payload=payload))
 
+    async def _clear_pending_reminders(self, task: Task) -> None:
+        await self.session.execute(
+            delete(Reminder).where(Reminder.task_id == task.id, Reminder.sent_at.is_(None))
+        )
+
+    async def _sync_reminder(self, task: Task) -> None:
+        """Keep exactly one pending reminder per open task with a date and time."""
+        await self._clear_pending_reminders(task)
+        if task.status != TaskStatus.TODO or not (task.due_date and task.due_time):
+            return
+        fire_at = local_to_utc(task.due_date, task.due_time, self.tz)
+        if fire_at > utcnow():
+            self.session.add(Reminder(task_id=task.id, fire_at=fire_at))
+
+    # --- tasks ---
+
     async def get(self, task_id: int) -> Task | None:
         return await self.session.get(Task, task_id)
+
+    async def get_many(self, ids: list[int]) -> list[Task]:
+        """Tasks in the order of `ids`, skipping missing ones."""
+        if not ids:
+            return []
+        by_id = {t.id: t for t in await self.session.scalars(select(Task).where(Task.id.in_(ids)))}
+        return [by_id[i] for i in ids if i in by_id]
 
     async def create(
         self,
@@ -28,6 +53,7 @@ class TaskRepo:
         self.session.add(task)
         await self.session.flush()
         await self._log(task, "created")
+        await self._sync_reminder(task)
         return task
 
     async def list_today(self, today: date) -> list[Task]:
@@ -47,14 +73,21 @@ class TaskRepo:
         )
         return list(await self.session.scalars(stmt))
 
+    async def done_on(self, day: date) -> list[Task]:
+        start, end = day_bounds_utc(day, self.tz)
+        stmt = select(Task).where(Task.status == TaskStatus.DONE, Task.done_at >= start, Task.done_at < end)
+        return list(await self.session.scalars(stmt))
+
     async def complete(self, task: Task) -> None:
         task.status = TaskStatus.DONE
         task.done_at = utcnow()
         await self._log(task, "done")
+        await self._sync_reminder(task)
 
     async def drop(self, task: Task) -> None:
         task.status = TaskStatus.DROPPED
         await self._log(task, "dropped")
+        await self._sync_reminder(task)
 
     async def reschedule(self, task: Task, new_date: date | None, new_time: time | None = None) -> None:
         old = task.due_date
@@ -66,6 +99,7 @@ class TaskRepo:
             "moved",
             {"from": old.isoformat() if old else None, "to": new_date.isoformat() if new_date else None},
         )
+        await self._sync_reminder(task)
 
     async def update(self, task: Task, title: str | None = None, priority: int | None = None) -> None:
         changes = {}
@@ -77,3 +111,43 @@ class TaskRepo:
             task.priority = priority
         if changes:
             await self._log(task, "edited", {"old": changes})
+
+    async def rollover(self, today: date) -> int:
+        """Move every open task from past days to today; each move counts as a slip."""
+        stmt = select(Task).where(Task.status == TaskStatus.TODO, Task.due_date < today)
+        tasks = list(await self.session.scalars(stmt))
+        for task in tasks:
+            await self._log(task, "slipped", {"from": task.due_date.isoformat()})
+            task.due_date = today
+            await self._sync_reminder(task)
+        return len(tasks)
+
+    # --- reminders ---
+
+    async def snooze(self, task: Task, minutes: int) -> None:
+        await self._clear_pending_reminders(task)
+        self.session.add(Reminder(task_id=task.id, fire_at=utcnow() + timedelta(minutes=minutes)))
+        await self._log(task, "snoozed", {"minutes": minutes})
+
+    async def due_reminders(self) -> list[tuple[Reminder, Task]]:
+        stmt = (
+            select(Reminder, Task)
+            .join(Task, Task.id == Reminder.task_id)
+            .where(Reminder.sent_at.is_(None), Reminder.fire_at <= utcnow(), Task.status == TaskStatus.TODO)
+            .order_by(Reminder.fire_at)
+        )
+        return [(r, t) for r, t in await self.session.execute(stmt)]
+
+    # --- day plans ---
+
+    async def get_plan(self, day: date) -> DayPlan | None:
+        return await self.session.get(DayPlan, day)
+
+    async def save_plan(self, day: date, task_ids: list[int]) -> DayPlan:
+        plan = await self.get_plan(day)
+        if plan is None:
+            plan = DayPlan(date=day, task_ids=task_ids)
+            self.session.add(plan)
+        else:
+            plan.task_ids = list(task_ids)  # new list so the JSON change is detected
+        return plan

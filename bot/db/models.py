@@ -60,6 +60,8 @@ class DayPlan(Base):
     date: Mapped[date] = mapped_column(Date, primary_key=True)
     task_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # NULL while the morning brief is still a proposal
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

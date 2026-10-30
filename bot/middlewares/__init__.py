@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.clock import local_today
 from bot.repo import TaskRepo
+from bot.settings_store import SettingsStore
 
 Handler = Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]]
 
@@ -34,6 +35,7 @@ class DbSessionMiddleware(BaseMiddleware):
 
     async def __call__(self, handler: Handler, event: TelegramObject, data: dict[str, Any]) -> Any:
         async with self.sessionmaker() as session, session.begin():
-            data["repo"] = TaskRepo(session)
+            data["repo"] = TaskRepo(session, self.tz)
+            data["store"] = SettingsStore(session)
             data["today"] = local_today(self.tz)
             return await handler(event, data)

@@ -31,3 +31,16 @@ def format_task(task: Task, today: date) -> str:
 
 def format_closed(task: Task, icon: str) -> str:
     return f"{icon} <s>{escape(task.title)}</s>"
+
+
+def format_line(task: Task, today: date) -> str:
+    """One-line variant for lists inside a single message."""
+    meta = []
+    if task.due_time:
+        meta.append(f"⏰ {task.due_time:%H:%M}")
+    if task.due_date is None:
+        meta.append("📥 inbox")
+    elif task.due_date < today:
+        meta.append("⚠️ overdue")
+    suffix = f" <i>· {' · '.join(meta)}</i>" if meta else ""
+    return f"{PRIORITY_MARK.get(task.priority, '')}{escape(task.title)}{suffix}"
