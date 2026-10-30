@@ -1,11 +1,11 @@
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.clock import day_bounds_utc, local_to_utc, utcnow
-from bot.db.models import DayPlan, Event, Reminder, Task, TaskStatus
+from bot.db.models import AiCall, AiProposal, DayPlan, Event, Reminder, Task, TaskStatus
 
 
 class TaskRepo:
@@ -70,6 +70,15 @@ class TaskRepo:
             select(Task)
             .where(Task.status == TaskStatus.TODO, Task.due_date.is_(None))
             .order_by(Task.priority, Task.created_at)
+        )
+        return list(await self.session.scalars(stmt))
+
+    async def list_open(self) -> list[Task]:
+        """All open tasks, dated first, for the LLM prompt."""
+        stmt = (
+            select(Task)
+            .where(Task.status == TaskStatus.TODO)
+            .order_by(Task.due_date.is_(None), Task.due_date, Task.due_time, Task.id)
         )
         return list(await self.session.scalars(stmt))
 
@@ -151,3 +160,24 @@ class TaskRepo:
         else:
             plan.task_ids = list(task_ids)  # new list so the JSON change is detected
         return plan
+
+    # --- AI ---
+
+    async def log_ai_call(self, model: str, purpose: str, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
+        self.session.add(
+            AiCall(model=model, purpose=purpose, input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd)
+        )
+
+    async def ai_usage_since(self, since: datetime) -> tuple[int, float]:
+        stmt = select(func.count(AiCall.id), func.coalesce(func.sum(AiCall.cost_usd), 0.0)).where(AiCall.at >= since)
+        count, cost = (await self.session.execute(stmt)).one()
+        return count, float(cost)
+
+    async def create_proposal(self, actions: list[dict]) -> AiProposal:
+        proposal = AiProposal(actions=actions, selected=list(range(len(actions))))
+        self.session.add(proposal)
+        await self.session.flush()
+        return proposal
+
+    async def get_proposal(self, proposal_id: int) -> AiProposal | None:
+        return await self.session.get(AiProposal, proposal_id)

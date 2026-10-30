@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 from enum import StrEnum
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, SmallInteger, String, Text, Time
+from sqlalchemy import JSON, Date, DateTime, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, Time
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from bot.clock import utcnow
@@ -82,3 +82,29 @@ class Event(Base):
     action: Mapped[str] = mapped_column(String(32))
     payload: Mapped[dict | None] = mapped_column(JSON)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class AiCall(Base):
+    """Per-call cost log for the LLM."""
+
+    __tablename__ = "ai_calls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    model: Mapped[str] = mapped_column(String(64))
+    purpose: Mapped[str] = mapped_column(String(32))
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    output_tokens: Mapped[int] = mapped_column(Integer)
+    cost_usd: Mapped[float] = mapped_column(Float)
+
+
+class AiProposal(Base):
+    """Actions parsed by the LLM, waiting for the user to confirm them."""
+
+    __tablename__ = "ai_proposals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actions: Mapped[list[dict]] = mapped_column(JSON)
+    selected: Mapped[list[int]] = mapped_column(JSON)  # indexes into actions
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

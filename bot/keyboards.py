@@ -26,6 +26,12 @@ class PickCb(CallbackData, prefix="p"):
     day: int  # date.toordinal()
 
 
+class ProposalCb(CallbackData, prefix="ai"):
+    action: str  # toggle | save | cancel
+    id: int  # proposal id
+    idx: int = 0  # action index for toggle
+
+
 class AddCb(CallbackData, prefix="a"):
     field: str  # date | prio
     value: str
@@ -81,6 +87,18 @@ def plan_edit_kb(day: date, proposed: list[Task], selected: set[int]) -> InlineK
         b.button(text=f"{mark} {title}", callback_data=PlanCb(action="toggle", day=day.toordinal(), id=task.id))
     b.button(text=f"✅ Accept ({len(selected)})", callback_data=PlanCb(action="accept", day=day.toordinal()))
     b.adjust(1)
+    return b.as_markup()
+
+
+def proposal_kb(proposal_id: int, labels: list[str], selected: set[int]) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for idx, label in enumerate(labels):
+        mark = "☑️" if idx in selected else "⬜️"
+        text = label if len(label) <= 48 else label[:47] + "…"
+        b.button(text=f"{mark} {text}", callback_data=ProposalCb(action="toggle", id=proposal_id, idx=idx))
+    b.button(text=f"💾 Save ({len(selected)})", callback_data=ProposalCb(action="save", id=proposal_id))
+    b.button(text="✖️ Cancel", callback_data=ProposalCb(action="cancel", id=proposal_id))
+    b.adjust(*([1] * len(labels)), 2)
     return b.as_markup()
 
 

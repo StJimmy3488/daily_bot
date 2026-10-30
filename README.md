@@ -8,7 +8,7 @@ Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL (SQLite for lo
 - [x] Phase 0 — skeleton, whitelist middleware, docker-compose, backups
 - [x] Phase 1 — capture with regex parsing, `/today`, `/inbox`, `/add`, edit by reply
 - [x] Phase 2 — scheduler, morning brief, reminders, evening review, /focus, rollover
-- [ ] Phase 3 — LLM parsing, voice
+- [x] Phase 3 — Claude parsing, local voice transcription, natural edits and questions
 - [ ] Phase 4 — calendar sync, recurring tasks
 - [ ] Phase 5 — Mini App, weekly review
 
@@ -33,6 +33,19 @@ Nightly backup to R2: set `R2_BUCKET` / `R2_ENDPOINT` in `.env`, configure the `
 and add to crontab: `15 3 * * * cd /opt/planner && ./scripts/backup.sh >> backup.log 2>&1`.
 
 ## Usage
+
+**Natural language and voice (Phase 3).** With `ANTHROPIC_API_KEY` set, every text and voice note
+goes to Claude (`AI_MODEL`, default Haiku 5.5): *"remind me to call mom tomorrow at 7, buy milk, and
+the dentist moved to Friday"*. Voice notes are transcribed locally with faster-whisper
+(`WHISPER_MODEL`, default `small`; downloaded once into the `whisper-models` volume).
+
+- A single new task is saved immediately; a reply to a task card that changes only that task is
+  applied immediately.
+- Anything else (several tasks, edits, done/drop) shows a preview — tick items in or out, then Save.
+- Questions ("what's left this week?") get a short answer.
+- Only task titles, dates, times and priorities are sent to Claude. Every call is logged with its
+  cost in `ai_calls`; `/ai` shows the monthly total.
+- No key, an API error or a refusal falls back to the regex parser below.
 
 | Input | Result |
 | --- | --- |
@@ -65,13 +78,17 @@ bot/
   config.py         settings from .env
   parsing.py        regex task parser
   repo.py           task queries, reminders, rollover, day plans + events log
+  assistant.py      Claude: prompt, strict tools, validation, cost
+  actions.py        describe / apply proposed task actions
+  transcribe.py     local faster-whisper speech-to-text
   planning.py       morning brief, plan accept, evening review, reminder delivery
   scheduler.py      APScheduler jobs + startup catch-up
   settings_store.py settings table, quiet hours / focus
   keyboards.py      inline keyboards & callback data
   formatting.py     message rendering
   middlewares/      owner whitelist, DB session per update
-  handlers/         common, tasks (/today, /inbox, buttons), add (FSM), plan (/plan, /review, /focus, /set), capture
+  handlers/         common, tasks (/today, /inbox, buttons), add (FSM), plan (/plan, /review, /focus, /set),
+                    capture (text, voice, replies, AI previews)
   db/               models, engine
 migrations/         Alembic
 scripts/backup.sh   pg_dump -> R2
