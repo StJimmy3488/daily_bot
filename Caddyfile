@@ -1,0 +1,5 @@
+# Automatic HTTPS (Let's Encrypt) for the bot's web side.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy bot:8080
+}

@@ -4,8 +4,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.clock import day_bounds_utc, local_to_utc, utcnow
-from bot.db.models import AiCall, AiProposal, DayPlan, Event, Reminder, Task, TaskStatus
+from bot.clock import day_bounds_utc, local_to_utc, local_today, utcnow
+from bot.db.models import AiCall, AiProposal, CalendarEvent, DayPlan, Event, Reminder, Task, TaskStatus
+from bot.recurrence import next_occurrence
 
 
 class TaskRepo:
@@ -48,8 +49,17 @@ class TaskRepo:
         priority: int | None = None,
         due_date: date | None = None,
         due_time: time | None = None,
+        recurrence_rule: str | None = None,
+        est_minutes: int | None = None,
     ) -> Task:
-        task = Task(title=title, priority=priority or 2, due_date=due_date, due_time=due_time)
+        task = Task(
+            title=title,
+            priority=priority or 2,
+            due_date=due_date,
+            due_time=due_time,
+            recurrence_rule=recurrence_rule,
+            est_minutes=est_minutes,
+        )
         self.session.add(task)
         await self.session.flush()
         await self._log(task, "created")
@@ -87,16 +97,30 @@ class TaskRepo:
         stmt = select(Task).where(Task.status == TaskStatus.DONE, Task.done_at >= start, Task.done_at < end)
         return list(await self.session.scalars(stmt))
 
-    async def complete(self, task: Task) -> None:
+    async def _spawn_next(self, task: Task) -> Task | None:
+        if not (task.recurrence_rule and task.due_date):
+            return None
+        nxt = next_occurrence(task.recurrence_rule, task.due_date, local_today(self.tz))
+        if nxt is None:
+            return None
+        return await self.create(
+            task.title, task.priority, nxt, task.due_time, task.recurrence_rule, task.est_minutes
+        )
+
+    async def complete(self, task: Task) -> Task | None:
+        """Close the task; for a recurring one, return the freshly spawned next occurrence."""
         task.status = TaskStatus.DONE
         task.done_at = utcnow()
         await self._log(task, "done")
         await self._sync_reminder(task)
+        return await self._spawn_next(task)
 
-    async def drop(self, task: Task) -> None:
+    async def drop(self, task: Task) -> Task | None:
+        """Dropping one occurrence of a recurring task keeps the series going."""
         task.status = TaskStatus.DROPPED
         await self._log(task, "dropped")
         await self._sync_reminder(task)
+        return await self._spawn_next(task)
 
     async def reschedule(self, task: Task, new_date: date | None, new_time: time | None = None) -> None:
         old = task.due_date
@@ -110,8 +134,21 @@ class TaskRepo:
         )
         await self._sync_reminder(task)
 
-    async def update(self, task: Task, title: str | None = None, priority: int | None = None) -> None:
+    async def update(
+        self,
+        task: Task,
+        title: str | None = None,
+        priority: int | None = None,
+        recurrence_rule: str | None = None,
+        stop_repeating: bool = False,
+    ) -> None:
         changes = {}
+        if stop_repeating and task.recurrence_rule:
+            changes["recurrence_rule"] = task.recurrence_rule
+            task.recurrence_rule = None
+        elif recurrence_rule and recurrence_rule != task.recurrence_rule:
+            changes["recurrence_rule"] = task.recurrence_rule
+            task.recurrence_rule = recurrence_rule
         if title and title != task.title:
             changes["title"] = task.title
             task.title = title
@@ -181,3 +218,30 @@ class TaskRepo:
 
     async def get_proposal(self, proposal_id: int) -> AiProposal | None:
         return await self.session.get(AiProposal, proposal_id)
+
+    # --- calendar ---
+
+    async def events_between(self, start: datetime, end: datetime) -> list[CalendarEvent]:
+        stmt = (
+            select(CalendarEvent)
+            .where(CalendarEvent.start_at < end, CalendarEvent.end_at > start)
+            .order_by(CalendarEvent.all_day.desc(), CalendarEvent.start_at)
+        )
+        return list(await self.session.scalars(stmt))
+
+    async def events_on(self, day: date) -> list[CalendarEvent]:
+        return await self.events_between(*day_bounds_utc(day, self.tz))
+
+    async def events_starting_soon(self, within: timedelta) -> list[CalendarEvent]:
+        now = utcnow()
+        stmt = (
+            select(CalendarEvent)
+            .where(
+                CalendarEvent.all_day.is_(False),
+                CalendarEvent.notified_at.is_(None),
+                CalendarEvent.start_at > now,
+                CalendarEvent.start_at <= now + within,
+            )
+            .order_by(CalendarEvent.start_at)
+        )
+        return list(await self.session.scalars(stmt))

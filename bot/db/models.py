@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 from enum import StrEnum
 
-from sqlalchemy import JSON, Date, DateTime, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, Time
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, Time, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from bot.clock import utcnow
@@ -41,6 +41,8 @@ class Task(Base):
     due_time: Mapped[time | None] = mapped_column(Time)
     est_minutes: Mapped[int | None]
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"))
+    # RFC 5545 RRULE, e.g. FREQ=WEEKLY;BYDAY=MO. Completing spawns the next occurrence.
+    recurrence_rule: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -108,3 +110,22 @@ class AiProposal(Base):
     selected: Mapped[list[int]] = mapped_column(JSON)  # indexes into actions
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CalendarEvent(Base):
+    """Mirror of Google Calendar events in a rolling window, refreshed every 15 minutes."""
+
+    __tablename__ = "calendar_events"
+    __table_args__ = (UniqueConstraint("calendar_id", "event_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    calendar_id: Mapped[str] = mapped_column(String(255))
+    event_id: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str] = mapped_column(Text)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    all_day: Mapped[bool] = mapped_column(Boolean, default=False)
+    # False for events marked "free" in Google; those don't block the smart plan.
+    busy: Mapped[bool] = mapped_column(Boolean, default=True)
+    link: Mapped[str | None] = mapped_column(Text)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

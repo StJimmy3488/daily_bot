@@ -11,6 +11,9 @@ DEFAULTS = {
     "evening": "21:00",
     "quiet": "22:00-08:00",  # or "off"
     "focus_until": "",  # ISO UTC timestamp
+    "work_hours": "09:00-18:00",  # the smart plan fills free time inside this window
+    "google_refresh_token": "",
+    "google_oauth_state": "",  # "<state>|<ISO expiry>" while a connect link is open
 }
 
 
@@ -38,10 +41,19 @@ class SettingsStore:
         value = await self.get("focus_until")
         return datetime.fromisoformat(value) if value else None
 
+    async def work_hours(self) -> tuple[time, time]:
+        start, end = (parse_hhmm(part) for part in (await self.get("work_hours")).split("-"))
+        return start, end
+
     async def is_muted(self, now: datetime, tz: ZoneInfo) -> bool:
+        """Task reminders: muted by focus mode and quiet hours."""
         focus = await self.focus_until()
         if focus and now < focus:
             return True
+        return await self.is_quiet(now, tz)
+
+    async def is_quiet(self, now: datetime, tz: ZoneInfo) -> bool:
+        """Meeting heads-ups respect quiet hours only — focus shouldn't make you miss a meeting."""
         quiet = await self.get("quiet")
         if quiet == "off":
             return False

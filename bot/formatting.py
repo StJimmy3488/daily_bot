@@ -1,7 +1,10 @@
 from datetime import date
 from html import escape
+from zoneinfo import ZoneInfo
 
-from bot.db.models import Task
+from bot.clock import as_utc
+from bot.db.models import CalendarEvent, Task
+from bot.recurrence import describe_rule
 
 PRIORITY_MARK = {1: "🔴 ", 2: "", 3: "🔵 "}
 
@@ -26,6 +29,8 @@ def format_task(task: Task, today: date) -> str:
         meta.append("📥 inbox")
     if task.due_time:
         meta.append(f"⏰ {task.due_time:%H:%M}")
+    if task.recurrence_rule:
+        meta.append(f"🔁 {describe_rule(task.recurrence_rule)}")
     return f"{line}\n<i>{' · '.join(meta)}</i>"
 
 
@@ -44,3 +49,13 @@ def format_line(task: Task, today: date) -> str:
         meta.append("⚠️ overdue")
     suffix = f" <i>· {' · '.join(meta)}</i>" if meta else ""
     return f"{PRIORITY_MARK.get(task.priority, '')}{escape(task.title)}{suffix}"
+
+
+def format_event(event: CalendarEvent, tz: ZoneInfo, with_link: bool = False) -> str:
+    title = escape(event.title)
+    if with_link and event.link:
+        title = f'<a href="{escape(event.link, quote=True)}">{title}</a>'
+    if event.all_day:
+        return f"📅 all day · {title}"
+    start, end = as_utc(event.start_at).astimezone(tz), as_utc(event.end_at).astimezone(tz)
+    return f"📅 {start:%H:%M}–{end:%H:%M} · {title}"

@@ -9,7 +9,7 @@ Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL (SQLite for lo
 - [x] Phase 1 — capture with regex parsing, `/today`, `/inbox`, `/add`, edit by reply
 - [x] Phase 2 — scheduler, morning brief, reminders, evening review, /focus, rollover
 - [x] Phase 3 — Claude parsing, local voice transcription, natural edits and questions
-- [ ] Phase 4 — calendar sync, recurring tasks
+- [x] Phase 4 — Google Calendar sync and write-back, meeting heads-ups, smart plan, recurring tasks
 - [ ] Phase 5 — Mini App, weekly review
 
 ## Local run
@@ -63,6 +63,19 @@ as a slip. `/plan` and `/review` trigger either step by hand.
 **Muting:** quiet hours (default 22:00–08:00) and `/focus 90` hold reminders back; they're delivered
 when the mute ends. Change times with `/settings` and `/set`.
 
+**Calendar (Phase 4):** all calendars that are shown in Google Calendar are mirrored every 15 min
+(yesterday to +14 days, declined and cancelled events skipped). The morning brief lists meetings
+first, you get a ping 10 min before each meeting with its link (quiet hours apply, focus doesn't),
+and "block 2h for the audit tomorrow" creates an event in your primary calendar after you confirm.
+
+**Smart plan:** `/smartplan`, the brief's 🧠 button or "plan my day". Claude (`AI_PLAN_MODEL`) orders
+today's tasks and estimates durations; a deterministic fitter then places them into free time inside
+work hours (`/set work 09:00-18:00`), so nothing lands on a meeting — events marked *free* don't
+block. Saving the plan sets each task's time, which schedules a reminder at the slot start.
+
+**Recurring tasks:** "pay rent on the 1st of every month", "water plants every day". Stored as an
+RRULE; finishing or dropping one occurrence creates the next.
+
 **Scheduling:** APScheduler runs in-process with an in-memory store. Durable state is in the DB — the
 `reminders` table is polled every 30 s and `day_plans` records whether today's brief/review went out —
 so jobs are rebuilt on start and anything missed while the bot was down is caught up.
@@ -81,6 +94,11 @@ bot/
   assistant.py      Claude: prompt, strict tools, validation, cost
   actions.py        describe / apply proposed task actions
   transcribe.py     local faster-whisper speech-to-text
+  google_calendar.py  Google OAuth + Calendar REST client (aiohttp)
+  calendar_sync.py  mirror events into calendar_events
+  smart_plan.py     fit tasks into free time around meetings
+  recurrence.py     RRULE helpers
+  web.py            FastAPI app (health, OAuth callback) served by uvicorn in-process
   planning.py       morning brief, plan accept, evening review, reminder delivery
   scheduler.py      APScheduler jobs + startup catch-up
   settings_store.py settings table, quiet hours / focus
@@ -88,7 +106,7 @@ bot/
   formatting.py     message rendering
   middlewares/      owner whitelist, DB session per update
   handlers/         common, tasks (/today, /inbox, buttons), add (FSM), plan (/plan, /review, /focus, /set),
-                    capture (text, voice, replies, AI previews)
+                    calendar (/calendar, /smartplan), capture (text, voice, replies, AI previews)
   db/               models, engine
 migrations/         Alembic
 scripts/backup.sh   pg_dump -> R2

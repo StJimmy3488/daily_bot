@@ -17,6 +17,8 @@ COMMANDS = [
     BotCommand(command="add", description="Add a task step by step"),
     BotCommand(command="plan", description="Morning brief now"),
     BotCommand(command="review", description="Evening review now"),
+    BotCommand(command="smartplan", description="Time-slot today's tasks around meetings"),
+    BotCommand(command="calendar", description="Google Calendar: connect, today, sync"),
     BotCommand(command="focus", description="Mute reminders, e.g. /focus 90"),
     BotCommand(command="settings", description="Brief/review times, quiet hours"),
     BotCommand(command="ai", description="AI status and cost this month"),
@@ -30,6 +32,8 @@ Just write or send a 🎙 voice note — in Russian or English:
 <i>"remind me to call mom tomorrow at 7, buy milk, and the dentist moved to Friday"</i>
 Several tasks or any change to existing ones show a preview to confirm first.
 Ask questions too: <i>"what's left for this week?"</i>
+Repeating tasks: <i>"pay rent on the 1st of every month"</i>
+With Google Calendar: <i>"block 2 hours for the audit tomorrow at 10"</i>
 
 Without AI (or as a fallback) a simple parser understands:
 <code>buy milk</code> → inbox
@@ -52,6 +56,8 @@ Unfinished tasks roll over to the next day at midnight.
 /add — guided entry
 /plan — morning brief now
 /review — evening review now
+/smartplan — slot today's tasks between meetings
+/calendar — connect Google Calendar, see today
 /focus 90 — mute reminders for 90 min (/focus off)
 /settings — times and quiet hours
 /ai — AI status and cost"""

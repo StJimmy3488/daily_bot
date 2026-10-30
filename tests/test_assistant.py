@@ -8,6 +8,8 @@ from bot.assistant import (
     Assistant,
     CompleteAction,
     CreateAction,
+    EventAction,
+    PlanDayAction,
     UpdateAction,
     action_from_tool,
     build_context,
@@ -21,19 +23,35 @@ TODAY = date(2026, 10, 29)
 
 
 def test_action_from_tool_create_and_update():
-    a = action_from_tool("create_task", {"title": " Call mom ", "date": "2026-10-30", "time": "19:00", "priority": 2})
+    a = action_from_tool(
+        "create_task", {"title": " Call mom ", "date": "2026-10-30", "time": "19:00", "priority": 2, "repeat": ""}
+    )
     assert a == CreateAction(title="Call mom", due_date=date(2026, 10, 30), due_time=time(19), priority=2)
 
-    u = action_from_tool("update_task", {"id": 5, "title": "", "date": "inbox", "time": "", "priority": 0})
+    u = action_from_tool("update_task", {"id": 5, "title": "", "date": "inbox", "time": "", "priority": 0, "repeat": ""})
     assert u == UpdateAction(id=5, unschedule=True)
+
+    r = action_from_tool(
+        "create_task", {"title": "Rent", "date": "", "time": "", "priority": 2, "repeat": "rrule:freq=monthly;bymonthday=1"}
+    )
+    assert r.recurrence == "FREQ=MONTHLY;BYMONTHDAY=1"
+
+    stop = action_from_tool("update_task", {"id": 5, "title": "", "date": "", "time": "", "priority": 0, "repeat": "none"})
+    assert stop.stop_repeating and stop.recurrence is None
+
+    e = action_from_tool("create_calendar_event", {"title": "Audit", "date": "2026-10-30", "start": "10:00", "minutes": 120})
+    assert e == EventAction(title="Audit", day=date(2026, 10, 30), start=time(10), minutes=120)
+    assert action_from_tool("plan_day", {}) == PlanDayAction()
 
 
 @pytest.mark.parametrize(
     ("name", "data"),
     [
-        ("create_task", {"title": "  ", "date": "", "time": "", "priority": 2}),
-        ("create_task", {"title": "x", "date": "tomorrow", "time": "", "priority": 2}),
-        ("create_task", {"title": "x", "date": "", "time": "25:00", "priority": 2}),
+        ("create_task", {"title": "  ", "date": "", "time": "", "priority": 2, "repeat": ""}),
+        ("create_task", {"title": "x", "date": "tomorrow", "time": "", "priority": 2, "repeat": ""}),
+        ("create_task", {"title": "x", "date": "", "time": "25:00", "priority": 2, "repeat": ""}),
+        ("create_task", {"title": "x", "date": "", "time": "", "priority": 2, "repeat": "every monday"}),
+        ("create_calendar_event", {"title": "x", "date": "2026-10-30", "start": "10:00", "minutes": 0}),
         ("update_task", {"id": 1}),
         ("rm_rf", {}),
     ],
@@ -53,7 +71,7 @@ async def test_build_context(repo):
     await repo.create("Inbox thing")
     ctx = build_context(await repo.list_open(), datetime(2026, 10, 29, 9, 0, tzinfo=TZ), reply_to=t)
     assert "Now: Thursday 2026-10-29 09:00, timezone Europe/Riga" in ctx
-    assert f"{t.id} | Dentist | 2026-10-29 | 14:30 | 2" in ctx
+    assert f"{t.id} | Dentist | 2026-10-29 | 14:30 | 2 | -" in ctx
     assert "| Inbox thing | inbox | - |" in ctx
     assert f"replying to task {t.id}" in ctx
 
@@ -100,12 +118,16 @@ async def test_interpret_parses_tool_calls_and_cost():
         content=[
             SimpleNamespace(type="thinking", thinking=""),
             SimpleNamespace(type="text", text="Got it."),
-            SimpleNamespace(type="tool_use", name="create_task", input={"title": "Buy milk", "date": "", "time": "", "priority": 2}),
-            SimpleNamespace(type="tool_use", name="create_task", input={"title": "bad", "date": "nope", "time": "", "priority": 2}),
+            SimpleNamespace(
+                type="tool_use", name="create_task", input={"title": "Buy milk", "date": "", "time": "", "priority": 2, "repeat": ""}
+            ),
+            SimpleNamespace(
+                type="tool_use", name="create_task", input={"title": "bad", "date": "nope", "time": "", "priority": 2, "repeat": ""}
+            ),
             SimpleNamespace(type="tool_use", name="complete_task", input={"id": 4}),
         ],
     )
-    assistant = Assistant("test-key", "claude-haiku-5-5")
+    assistant = Assistant("test-key", "claude-haiku-5-5", "claude-opus-5-5")
     assistant.client = SimpleNamespace(messages=FakeMessages(response))
 
     result = await assistant.interpret("buy milk, and I did the report", [], datetime(2026, 10, 29, 9, tzinfo=TZ))
@@ -117,3 +139,28 @@ async def test_interpret_parses_tool_calls_and_cost():
     assert sent["model"] == "claude-haiku-5-5"
     assert all(tool["strict"] for tool in sent["tools"])
     assert "tool_choice" not in sent
+    assert "create_calendar_event" not in {t["name"] for t in sent["tools"]}  # no calendar connected
+
+
+async def test_order_day_uses_fallbacks_on_opus_and_fills_gaps(repo):
+    a = await repo.create("Report", priority=1, due_date=TODAY)
+    b = await repo.create("Email", due_date=TODAY)
+    c = await repo.create("Errand", due_date=TODAY)
+    response = SimpleNamespace(
+        stop_reason="end_turn",
+        model="claude-opus-5-5",
+        usage=SimpleNamespace(input_tokens=500, output_tokens=100),
+        content=[SimpleNamespace(type="text", text=f'{{"order": [{{"id": {b.id}, "minutes": 999}}, {{"id": 12345, "minutes": 5}}, {{"id": {a.id}, "minutes": 60}}], "note": "Go"}}')],
+    )
+    fake = FakeMessages(response)
+    assistant = Assistant("test-key", "claude-haiku-5-5", "claude-opus-5-5")
+    assistant.client = SimpleNamespace(beta=SimpleNamespace(messages=fake))
+
+    order = await assistant.order_day([a, b, c], [], (time(9), time(18)), datetime(2026, 10, 29, 8, tzinfo=TZ))
+
+    assert order.ids == [b.id, a.id, c.id]  # unknown id dropped, missing one appended
+    assert order.minutes == {b.id: 240, a.id: 60}  # clamped
+    assert order.note == "Go"
+    assert fake.kwargs["fallbacks"] == "default"
+    assert fake.kwargs["betas"] == ["server-side-fallback-2026-07-01"]
+    assert fake.kwargs["output_config"]["format"]["type"] == "json_schema"

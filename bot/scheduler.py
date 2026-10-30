@@ -10,7 +10,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot import planning
+from bot.calendar_sync import sync_calendar
 from bot.clock import local_today
+from bot.google_calendar import CalendarAuthError, CalendarError, GoogleCalendar
 from bot.repo import TaskRepo
 from bot.settings_store import SettingsStore
 
@@ -18,14 +20,18 @@ log = logging.getLogger(__name__)
 
 ROLLOVER_AT = time(0, 1)
 REMINDER_TICK_SECONDS = 30
+CALENDAR_SYNC_MINUTES = 15
 
 
 class PlannerScheduler:
     """In-memory APScheduler. Durable state lives in the DB (reminders, day_plans),
     so jobs are simply rebuilt on startup and missed daily jobs are caught up."""
 
-    def __init__(self, bot: Bot, sessionmaker: async_sessionmaker, chat_id: int, tz: ZoneInfo):
+    def __init__(
+        self, bot: Bot, sessionmaker: async_sessionmaker, chat_id: int, tz: ZoneInfo, gcal: GoogleCalendar | None = None
+    ):
         self.bot = bot
+        self.gcal = gcal
         self.sessionmaker = sessionmaker
         self.chat_id = chat_id
         self.tz = tz
@@ -45,9 +51,32 @@ class PlannerScheduler:
         await self._run(lambda repo, _: planning.send_review(self.bot, self.chat_id, repo, local_today(self.tz)))
 
     async def reminders(self) -> None:
-        await self._run(
-            lambda repo, store: planning.send_due_reminders(self.bot, self.chat_id, repo, store, local_today(self.tz))
-        )
+        async def job(repo: TaskRepo, store: SettingsStore) -> None:
+            await planning.send_due_reminders(self.bot, self.chat_id, repo, store, local_today(self.tz))
+            await planning.send_meeting_headsups(self.bot, self.chat_id, repo, store)
+
+        await self._run(job)
+
+    async def calendar_sync(self) -> None:
+        if self.gcal is None:
+            return
+
+        async def job(repo: TaskRepo, store: SettingsStore) -> None:
+            token = await store.get("google_refresh_token")
+            if not token:
+                return
+            try:
+                await sync_calendar(repo.session, self.gcal, token, self.tz)
+            except CalendarAuthError:
+                log.warning("Google token rejected; disconnecting the calendar")
+                await store.set("google_refresh_token", "")
+                await self.bot.send_message(
+                    self.chat_id, "⚠️ Google Calendar access was revoked or expired. Use /calendar to reconnect."
+                )
+            except (CalendarError, OSError, TimeoutError) as e:
+                log.warning("Calendar sync failed: %s", e)
+
+        await self._run(job)
 
     async def rollover(self) -> None:
         async def job(repo: TaskRepo, _: SettingsStore) -> None:
@@ -72,7 +101,11 @@ class PlannerScheduler:
         s.add_job(self.evening, self._cron(evening), id="evening")
         s.add_job(self.rollover, self._cron(ROLLOVER_AT), id="rollover")
         s.add_job(self.reminders, IntervalTrigger(seconds=REMINDER_TICK_SECONDS), id="reminders", max_instances=1)
+        s.add_job(
+            self.calendar_sync, IntervalTrigger(minutes=CALENDAR_SYNC_MINUTES), id="calendar_sync", max_instances=1
+        )
         s.start()
+        await self.calendar_sync()  # fresh meetings before any catch-up brief
         await self._catch_up(morning, evening)
 
     async def _catch_up(self, morning: time, evening: time) -> None:

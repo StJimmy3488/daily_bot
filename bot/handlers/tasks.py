@@ -49,14 +49,14 @@ async def on_task_action(query: CallbackQuery, callback_data: TaskCb, repo: Task
         return
 
     match callback_data.action:
-        case "done":
-            await repo.complete(task)
-            await query.message.edit_text(format_closed(task, "✅"))
-            await query.answer("Done 💪")
-        case "drop":
-            await repo.drop(task)
-            await query.message.edit_text(format_closed(task, "🗑"))
-            await query.answer("Dropped")
+        case "done" | "drop":
+            closing = repo.complete if callback_data.action == "done" else repo.drop
+            nxt = await closing(task)
+            icon = "✅" if callback_data.action == "done" else "🗑"
+            await query.message.edit_text(format_closed(task, icon))
+            await query.answer("Done 💪" if callback_data.action == "done" else "Dropped")
+            if nxt is not None:
+                await query.message.answer(f"🔁 Next time:\n{format_task(nxt, today)}", reply_markup=task_kb(nxt))
         case "today" | "tomorrow":
             offset = 0 if callback_data.action == "today" else 1
             await repo.reschedule(task, today + timedelta(days=offset))

@@ -16,7 +16,7 @@ class TaskCb(CallbackData, prefix="t"):
 
 
 class PlanCb(CallbackData, prefix="pl"):
-    action: str  # accept | edit | toggle
+    action: str  # accept | edit | toggle | smart
     day: int  # date.toordinal(), so a stale brief can't touch another day
     id: int = 0  # task id for toggle
 
@@ -76,6 +76,8 @@ def brief_kb(day: date) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="✅ Accept plan", callback_data=PlanCb(action="accept", day=day.toordinal()))
     b.button(text="✏️ Edit", callback_data=PlanCb(action="edit", day=day.toordinal()))
+    b.button(text="🧠 Smart plan", callback_data=PlanCb(action="smart", day=day.toordinal()))
+    b.adjust(2, 1)
     return b.as_markup()
 
 

@@ -6,6 +6,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
 from bot import planning
+from bot.assistant import Assistant
 from bot.clock import parse_hhmm, utcnow
 from bot.keyboards import PlanCb, plan_edit_kb, plan_ids_from_markup
 from bot.repo import TaskRepo
@@ -19,6 +20,11 @@ TIME_RE = re.compile(rf"^{HHMM}$")
 RANGE_RE = re.compile(rf"^{HHMM}-{HHMM}$")
 
 
+def _start_before_end(value: str) -> bool:
+    start, end = (parse_hhmm(v) for v in value.split("-"))
+    return start < end
+
+
 @router.message(Command("plan"))
 async def cmd_plan(message: Message, repo: TaskRepo, today: date) -> None:
     await planning.send_brief(message.bot, message.chat.id, repo, today)
@@ -30,7 +36,14 @@ async def cmd_review(message: Message, repo: TaskRepo, today: date) -> None:
 
 
 @router.callback_query(PlanCb.filter())
-async def on_plan(query: CallbackQuery, callback_data: PlanCb, repo: TaskRepo, today: date) -> None:
+async def on_plan(
+    query: CallbackQuery,
+    callback_data: PlanCb,
+    repo: TaskRepo,
+    store: SettingsStore,
+    today: date,
+    assistant: Assistant | None,
+) -> None:
     plan = await repo.get_plan(today)
     if callback_data.day != today.toordinal() or plan is None:
         await query.answer("This plan is from another day")
@@ -41,6 +54,9 @@ async def on_plan(query: CallbackQuery, callback_data: PlanCb, repo: TaskRepo, t
     proposed_ids = plan_ids_from_markup(query.message.reply_markup) or list(plan.task_ids)
 
     match callback_data.action:
+        case "smart":
+            await query.answer("Planning…")
+            await planning.send_smart_plan(query.bot, query.message.chat.id, repo, store, assistant, today)
         case "edit":
             proposed = await repo.get_many(proposed_ids)
             await query.message.edit_reply_markup(reply_markup=plan_edit_kb(today, proposed, set(plan.task_ids)))
@@ -86,9 +102,10 @@ async def cmd_settings(message: Message, store: SettingsStore, repo: TaskRepo) -
         f"Morning brief: {await store.get('morning')}\n"
         f"Evening review: {await store.get('evening')}\n"
         f"Quiet hours: {await store.get('quiet')}\n"
+        f"Work hours (smart plan): {await store.get('work_hours')}\n"
         f"Focus: {focus_line}\n\n"
         "Change with <code>/set morning 07:30</code>, <code>/set evening 21:30</code>, "
-        "<code>/set quiet 22:00-08:00</code> or <code>/set quiet off</code>"
+        "<code>/set quiet 22:00-08:00</code>, <code>/set quiet off</code> or <code>/set work 09:00-18:00</code>"
     )
 
 
@@ -102,7 +119,11 @@ async def cmd_set(message: Message, command: CommandObject, store: SettingsStore
         scheduler.set_daily_time(key, parse_hhmm(value))
     elif key == "quiet" and (value == "off" or RANGE_RE.match(value)):
         await store.set(key, value)
+    elif key == "work" and RANGE_RE.match(value) and _start_before_end(value):
+        value = "-".join(f"{parse_hhmm(v):%H:%M}" for v in value.split("-"))
+        key = "work_hours"
+        await store.set(key, value)
     else:
-        await message.answer("Usage: <code>/set morning 07:30</code>, <code>/set evening 21:30</code>, <code>/set quiet 22:00-08:00</code>")
+        await message.answer("Usage: <code>/set morning 07:30</code>, <code>/set evening 21:30</code>, <code>/set quiet 22:00-08:00</code>, <code>/set work 09:00-18:00</code>")
         return
     await message.answer(f"Saved: {key} = {value}")
