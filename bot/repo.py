@@ -18,9 +18,7 @@ class TaskRepo:
         self.session.add(Event(task_id=task.id, action=action, payload=payload))
 
     async def _clear_pending_reminders(self, task: Task) -> None:
-        await self.session.execute(
-            delete(Reminder).where(Reminder.task_id == task.id, Reminder.sent_at.is_(None))
-        )
+        await self.session.execute(delete(Reminder).where(Reminder.task_id == task.id, Reminder.sent_at.is_(None)))
 
     async def _sync_reminder(self, task: Task) -> None:
         """Keep exactly one pending reminder per open task with a date and time."""
@@ -103,9 +101,7 @@ class TaskRepo:
         nxt = next_occurrence(task.recurrence_rule, task.due_date, local_today(self.tz))
         if nxt is None:
             return None
-        return await self.create(
-            task.title, task.priority, nxt, task.due_time, task.recurrence_rule, task.est_minutes
-        )
+        return await self.create(task.title, task.priority, nxt, task.due_time, task.recurrence_rule, task.est_minutes)
 
     async def complete(self, task: Task) -> Task | None:
         """Close the task; for a recurring one, return the freshly spawned next occurrence."""
@@ -200,9 +196,13 @@ class TaskRepo:
 
     # --- AI ---
 
-    async def log_ai_call(self, model: str, purpose: str, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
+    async def log_ai_call(
+        self, model: str, purpose: str, input_tokens: int, output_tokens: int, cost_usd: float
+    ) -> None:
         self.session.add(
-            AiCall(model=model, purpose=purpose, input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd)
+            AiCall(
+                model=model, purpose=purpose, input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd
+            )
         )
 
     async def ai_usage_since(self, since: datetime) -> tuple[int, float]:

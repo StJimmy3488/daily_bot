@@ -46,7 +46,9 @@ async def cmd_calendar(
     message: Message, repo: TaskRepo, store: SettingsStore, today: date, gcal: GoogleCalendar | None
 ) -> None:
     if gcal is None:
-        await message.answer("Google Calendar isn't configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see README).")
+        await message.answer(
+            "Google Calendar isn't configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see README)."
+        )
         return
     if not await store.get("google_refresh_token"):
         state = await new_oauth_state(store)

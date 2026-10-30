@@ -1,7 +1,7 @@
 # Personal Planner Bot
 
 Single-user Telegram bot that captures tasks, plans the day and pings at the right time.
-Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL (SQLite for local dev).
+Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL 16 · FastAPI · Caddy.
 
 ## Status
 
@@ -14,13 +14,43 @@ Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL (SQLite for lo
 
 ## Local run
 
+Postgres 16+ is required everywhere — dev, tests and production use the same database.
+
 ```bash
-cp .env .env          # set BOT_TOKEN (from @BotFather) and OWNER_ID (ask @userinfobot)
+cp .env.example .env          # set BOT_TOKEN (from @BotFather) and OWNER_ID (ask @userinfobot)
+# A local Postgres with databases `planner` and `planner_test` (user/password planner/planner):
+docker compose -f compose.dev.yml up -d     # or Postgres.app / Homebrew, see scripts/dev-db-init.sql
 uv sync
-uv run alembic upgrade head   # creates ./planner.db
+uv run alembic upgrade head
 uv run python -m bot
-uv run pytest
+uv run pytest                 # uses TEST_DATABASE_URL, default .../planner_test
+uv run ruff check && uv run ruff format .
 ```
+
+## CI/CD
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+1. **lint** — `uv lock --check`, `ruff check`, `ruff format --check`
+2. **test** — against a Postgres 16 service: migrations upgrade → `alembic check` (models and
+   migrations agree) → downgrade → upgrade, then `pytest`
+3. **image** — builds the Docker image; on `main` pushes it to
+   `ghcr.io/stjimmy3488/daily_bot:<sha>` and `:latest`
+4. **deploy** (`main` only, after everything above) — copies `docker-compose.yml` and `Caddyfile`
+   to the VPS, then runs `scripts/deploy.sh` over SSH: pull the image, `docker compose up -d`, wait
+   until the container's health check passes (fails the job and prints logs otherwise)
+
+One-time setup in **GitHub → Settings → Environments → `production`**:
+
+| Secret | Value |
+| --- | --- |
+| `VPS_HOST` | `2.31.133.165` |
+| `VPS_USER` | the SSH user (e.g. `root`) |
+| `VPS_SSH_KEY` | private key of a key pair made for CI only (its `.pub` goes into the VPS user's `~/.ssh/authorized_keys`) |
+| `VPS_KNOWN_HOSTS` | output of `ssh-keyscan 2.31.133.165`, so CI can verify it is talking to your server |
+
+Optional variable `VPS_APP_DIR` (default `/opt/planner/daily_bot`). The VPS keeps its own `.env`;
+CI never sees it. Roll back by re-running the deploy job of an earlier commit.
 
 ## Deploy (VPS)
 

@@ -7,5 +7,8 @@ def test_public_url_defaults_to_domain():
 
 
 def test_public_url_explicit_wins_and_local_fallback():
-    assert Settings(bot_token="1:x", owner_id=1, domain="a.b", public_url="https://c.d/", _env_file=None).public_url == "https://c.d"
+    assert (
+        Settings(bot_token="1:x", owner_id=1, domain="a.b", public_url="https://c.d/", _env_file=None).public_url
+        == "https://c.d"
+    )
     assert Settings(bot_token="1:x", owner_id=1, _env_file=None).public_url == "http://localhost:8080"

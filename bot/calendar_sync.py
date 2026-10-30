@@ -37,7 +37,11 @@ def parse_event(item: dict, tz: ZoneInfo) -> dict | None:
         return None
 
     video = next(
-        (e.get("uri") for e in item.get("conferenceData", {}).get("entryPoints", []) if e.get("entryPointType") == "video"),
+        (
+            e.get("uri")
+            for e in item.get("conferenceData", {}).get("entryPoints", [])
+            if e.get("entryPointType") == "video"
+        ),
         None,
     )
     return {

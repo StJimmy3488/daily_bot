@@ -2,7 +2,7 @@ from datetime import date, time, timedelta
 
 from sqlalchemy import select
 
-from bot.clock import as_utc, local_today, local_to_utc
+from bot.clock import as_utc, local_to_utc, local_today
 from bot.db.models import Event, Reminder, TaskStatus
 from tests.conftest import TZ
 

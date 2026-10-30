@@ -124,6 +124,9 @@ async def cmd_set(message: Message, command: CommandObject, store: SettingsStore
         key = "work_hours"
         await store.set(key, value)
     else:
-        await message.answer("Usage: <code>/set morning 07:30</code>, <code>/set evening 21:30</code>, <code>/set quiet 22:00-08:00</code>, <code>/set work 09:00-18:00</code>")
+        await message.answer(
+            "Usage: <code>/set morning 07:30</code>, <code>/set evening 21:30</code>, "
+            "<code>/set quiet 22:00-08:00</code>, <code>/set work 09:00-18:00</code>"
+        )
         return
     await message.answer(f"Saved: {key} = {value}")

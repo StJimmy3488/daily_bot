@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 import uvicorn
-
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -10,8 +9,8 @@ from aiogram.enums import ParseMode
 from bot.assistant import Assistant
 from bot.config import get_settings
 from bot.db.session import make_engine, make_sessionmaker
-from bot.handlers import build_router
 from bot.google_calendar import GoogleCalendar
+from bot.handlers import build_router
 from bot.handlers.common import COMMANDS
 from bot.middlewares import DbSessionMiddleware, WhitelistMiddleware
 from bot.scheduler import PlannerScheduler
