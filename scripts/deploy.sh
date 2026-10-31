@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # Runs on the VPS, piped over SSH by the CI deploy job:
-# pull the freshly built image, restart, and wait until the bot reports healthy.
+# write the .env rendered from GitHub secrets, pull the freshly built image,
+# restart, and wait until the bot reports healthy.
 set -euo pipefail
-: "${APP_DIR:?}" "${BOT_IMAGE:?}"
+: "${APP_DIR:?}" "${BOT_IMAGE:?}" "${ENV_FILE_B64:?}"
 cd "$APP_DIR"
+
+# Replace .env in one step; keep the previous one for a manual rollback.
+umask 077
+printf '%s' "$ENV_FILE_B64" | base64 -d > .env.new
+[ -f .env ] && install -m 600 .env .env.bak
+mv .env.new .env
 
 if [ -n "${REGISTRY_TOKEN:-}" ]; then
   echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null

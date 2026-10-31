@@ -40,17 +40,33 @@ uv run ruff check && uv run ruff format .
    to the VPS, then runs `scripts/deploy.sh` over SSH: pull the image, `docker compose up -d`, wait
    until the container's health check passes (fails the job and prints logs otherwise)
 
-One-time setup in **GitHub → Settings → Environments → `production`**:
+### Secrets and configuration
 
-| Secret | Value |
-| --- | --- |
-| `VPS_HOST` | `2.31.133.165` |
-| `VPS_USER` | the SSH user (e.g. `root`) |
-| `VPS_SSH_KEY` | private key of a key pair made for CI only (its `.pub` goes into the VPS user's `~/.ssh/authorized_keys`) |
-| `VPS_KNOWN_HOSTS` | output of `ssh-keyscan 2.31.133.165`, so CI can verify it is talking to your server |
+GitHub is the source of truth: everything lives in **Settings → Environments → `production`**, and
+every deploy renders the VPS `.env` from it (`scripts/render-env.sh`), sends it over SSH stdin and
+swaps it in owner-only (`chmod 600`), keeping the previous one as `.env.bak`. Don't edit `.env` on
+the VPS — the next deploy overwrites it. Keep your own copy of the secrets in a password manager:
+GitHub can't show them again.
 
-Optional variable `VPS_APP_DIR` (default `/opt/planner/daily_bot`). The VPS keeps its own `.env`;
-CI never sees it. Roll back by re-running the deploy job of an earlier commit.
+| Kind | Name | Notes |
+| --- | --- | --- |
+| Secret | `VPS_HOST`, `VPS_USER` | e.g. `2.31.133.165`, `root` |
+| Secret | `VPS_SSH_KEY` | private key of a CI-only key pair; its `.pub` goes into the VPS `~/.ssh/authorized_keys` |
+| Secret | `VPS_KNOWN_HOSTS` | output of `ssh-keyscan 2.31.133.165` |
+| Secret | `BOT_TOKEN` | required |
+| Secret | `POSTGRES_PASSWORD` | required — see note below |
+| Secret | `ANTHROPIC_API_KEY`, `GOOGLE_CLIENT_SECRET` | optional |
+| Variable | `OWNER_ID`, `DOMAIN` | required |
+| Variable | `TIMEZONE`, `AI_MODEL`, `AI_PLAN_MODEL`, `WHISPER_MODEL`, `GOOGLE_CLIENT_ID`, `R2_BUCKET`, `R2_ENDPOINT`, `VPS_APP_DIR` | optional; unset means the app default |
+
+To rotate a key, change it in GitHub and re-run the latest deploy job. Values can't contain a single
+quote or a newline (the job fails with a clear error).
+
+**`POSTGRES_PASSWORD`** is only applied when the database volume is first created. To change it
+later, also run on the VPS:
+`docker compose exec db psql -U planner -c "ALTER USER planner PASSWORD '<new>'"`, then redeploy.
+
+Roll back by re-running the deploy job of an earlier commit.
 
 ## Deploy (VPS)
 
