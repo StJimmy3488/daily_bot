@@ -78,7 +78,9 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 @router.message(Command("ai"))
 async def cmd_ai(message: Message, repo: TaskRepo, today: date, assistant: Assistant | None) -> None:
     if assistant is None:
-        await message.answer("AI is off — set ANTHROPIC_API_KEY to enable it. Voice notes still work via the simple parser.")
+        await message.answer(
+            "AI is off — set ANTHROPIC_API_KEY to enable it. Voice notes still work via the simple parser."
+        )
         return
     month_start = local_to_utc(today.replace(day=1), time(0), repo.tz)
     calls, cost = await repo.ai_usage_since(month_start)

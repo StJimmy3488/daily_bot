@@ -59,7 +59,9 @@ async def send_brief(bot: Bot, chat_id: int, repo: TaskRepo, today: date) -> Non
     events = await repo.events_on(today)
     if not proposed:
         text = f"☀️ <b>Good morning — {today:%a %d.%m}</b>\n\n"
-        text += "\n".join(format_event(e, repo.tz) for e in events) if events else "Nothing planned and the inbox is empty."
+        text += (
+            "\n".join(format_event(e, repo.tz) for e in events) if events else "Nothing planned and the inbox is empty."
+        )
         await bot.send_message(chat_id, text)
         return
     await bot.send_message(chat_id, brief_text(today, proposed, events, repo.tz), reply_markup=brief_kb(today))
@@ -189,4 +191,6 @@ async def send_smart_plan(
     proposal = await repo.create_proposal(dump_actions(actions))
     by_id = {t.id: t for t in tasks}
     labels = [task_actions.describe(a, by_id, today) for a in actions]
-    await bot.send_message(chat_id, "\n".join(lines), reply_markup=proposal_kb(proposal.id, labels, set(proposal.selected)))
+    await bot.send_message(
+        chat_id, "\n".join(lines), reply_markup=proposal_kb(proposal.id, labels, set(proposal.selected))
+    )

@@ -52,7 +52,9 @@ async def add_when_text(message: Message, state: FSMContext, today: date) -> Non
     if parsed.due_time and not parsed.due_date:
         parsed.due_date = today
     if parsed.due_date is None or parsed.title:
-        await message.answer("Didn't get that date. Try <code>tomorrow</code>, <code>fri</code>, <code>25.11 9:00</code>")
+        await message.answer(
+            "Didn't get that date. Try <code>tomorrow</code>, <code>fri</code>, <code>25.11 9:00</code>"
+        )
         return
     await state.update_data(
         due_date=parsed.due_date.isoformat(),

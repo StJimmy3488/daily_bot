@@ -11,7 +11,7 @@ def local_today(tz: ZoneInfo) -> date:
 
 
 def as_utc(dt: datetime) -> datetime:
-    """SQLite hands back naive datetimes; everything we store is UTC."""
+    """Normalise to aware UTC (values built in code may be naive or in another zone)."""
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
 
 

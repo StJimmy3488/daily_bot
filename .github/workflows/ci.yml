@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  UV_PYTHON: "3.12"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv lock --check
+      - run: uv sync --frozen
+      - run: uv run ruff check
+      - run: uv run ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: planner
+          POSTGRES_PASSWORD: planner
+          POSTGRES_DB: planner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U planner"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PGPASSWORD: planner
+      DATABASE_URL: postgresql+asyncpg://planner:planner@localhost:5432/planner
+      TEST_DATABASE_URL: postgresql+asyncpg://planner:planner@localhost:5432/planner_test
+      BOT_TOKEN: "1:ci"
+      OWNER_ID: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Migrations apply, match the models, and roll back
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+      - run: psql -h localhost -U planner -d planner -c "CREATE DATABASE planner_test"
+      - run: uv run pytest -q
+
+  image:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: name  # registry names must be lowercase
+        run: |
+          echo "repo=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+          tags: |
+            ${{ steps.name.outputs.image }}
+            ${{ steps.name.outputs.repo }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: image
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read  # the VPS logs in to GHCR with this job's token to pull the image
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Upload compose files
+        env:
+          TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+          APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/planner/daily_bot' }}
+        run: scp -i ~/.ssh/deploy_key docker-compose.yml Caddyfile "$TARGET:$APP_DIR/"
+      - name: Write .env, pull and restart
+        env:
+          TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+          APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/planner/daily_bot' }}
+          BOT_IMAGE: ${{ needs.image.outputs.image }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # App configuration, rendered into the VPS .env by scripts/render-env.sh
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          OWNER_ID: ${{ vars.OWNER_ID }}
+          DOMAIN: ${{ vars.DOMAIN }}
+          TIMEZONE: ${{ vars.TIMEZONE }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          AI_PLAN_MODEL: ${{ vars.AI_PLAN_MODEL }}
+          WHISPER_MODEL: ${{ vars.WHISPER_MODEL }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+        run: |
+          env_file_b64=$(scripts/render-env.sh | base64 -w0)
+          # Everything goes over stdin, not the command line, so secrets never show up in `ps`.
+          {
+            printf 'export APP_DIR=%q BOT_IMAGE=%q REGISTRY_USER=%q REGISTRY_TOKEN=%q ENV_FILE_B64=%q\n' \
+              "$APP_DIR" "$BOT_IMAGE" "${{ github.actor }}" "$REGISTRY_TOKEN" "$env_file_b64"
+            cat scripts/deploy.sh
+          } | ssh -i ~/.ssh/deploy_key "$TARGET" 'bash -s'

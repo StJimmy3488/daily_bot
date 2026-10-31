@@ -1,7 +1,7 @@
 # Personal Planner Bot
 
 Single-user Telegram bot that captures tasks, plans the day and pings at the right time.
-Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL (SQLite for local dev).
+Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL 16 · FastAPI · Caddy.
 
 ## Status
 
@@ -14,13 +14,59 @@ Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL (SQLite for lo
 
 ## Local run
 
+Postgres 16+ is required everywhere — dev, tests and production use the same database.
+
 ```bash
-cp .env .env          # set BOT_TOKEN (from @BotFather) and OWNER_ID (ask @userinfobot)
+cp .env.example .env          # set BOT_TOKEN (from @BotFather) and OWNER_ID (ask @userinfobot)
+# A local Postgres with databases `planner` and `planner_test` (user/password planner/planner):
+docker compose -f compose.dev.yml up -d     # or Postgres.app / Homebrew, see scripts/dev-db-init.sql
 uv sync
-uv run alembic upgrade head   # creates ./planner.db
+uv run alembic upgrade head
 uv run python -m bot
-uv run pytest
+uv run pytest                 # uses TEST_DATABASE_URL, default .../planner_test
+uv run ruff check && uv run ruff format .
 ```
+
+## CI/CD
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+1. **lint** — `uv lock --check`, `ruff check`, `ruff format --check`
+2. **test** — against a Postgres 16 service: migrations upgrade → `alembic check` (models and
+   migrations agree) → downgrade → upgrade, then `pytest`
+3. **image** — builds the Docker image; on `main` pushes it to
+   `ghcr.io/stjimmy3488/daily_bot:<sha>` and `:latest`
+4. **deploy** (`main` only, after everything above) — copies `docker-compose.yml` and `Caddyfile`
+   to the VPS, then runs `scripts/deploy.sh` over SSH: pull the image, `docker compose up -d`, wait
+   until the container's health check passes (fails the job and prints logs otherwise)
+
+### Secrets and configuration
+
+GitHub is the source of truth: everything lives in **Settings → Environments → `production`**, and
+every deploy renders the VPS `.env` from it (`scripts/render-env.sh`), sends it over SSH stdin and
+swaps it in owner-only (`chmod 600`), keeping the previous one as `.env.bak`. Don't edit `.env` on
+the VPS — the next deploy overwrites it. Keep your own copy of the secrets in a password manager:
+GitHub can't show them again.
+
+| Kind | Name | Notes |
+| --- | --- | --- |
+| Secret | `VPS_HOST`, `VPS_USER` | e.g. `2.31.133.165`, `root` |
+| Secret | `VPS_SSH_KEY` | private key of a CI-only key pair; its `.pub` goes into the VPS `~/.ssh/authorized_keys` |
+| Secret | `VPS_KNOWN_HOSTS` | output of `ssh-keyscan 2.31.133.165` |
+| Secret | `BOT_TOKEN` | required |
+| Secret | `POSTGRES_PASSWORD` | required — see note below |
+| Secret | `ANTHROPIC_API_KEY`, `GOOGLE_CLIENT_SECRET` | optional |
+| Variable | `OWNER_ID`, `DOMAIN` | required |
+| Variable | `TIMEZONE`, `AI_MODEL`, `AI_PLAN_MODEL`, `WHISPER_MODEL`, `GOOGLE_CLIENT_ID`, `R2_BUCKET`, `R2_ENDPOINT`, `VPS_APP_DIR` | optional; unset means the app default |
+
+To rotate a key, change it in GitHub and re-run the latest deploy job. Values can't contain a single
+quote or a newline (the job fails with a clear error).
+
+**`POSTGRES_PASSWORD`** is only applied when the database volume is first created. To change it
+later, also run on the VPS:
+`docker compose exec db psql -U planner -c "ALTER USER planner PASSWORD '<new>'"`, then redeploy.
+
+Roll back by re-running the deploy job of an earlier commit.
 
 ## Deploy (VPS)
 

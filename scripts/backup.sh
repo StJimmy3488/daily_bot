@@ -5,7 +5,10 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-set -a; source .env; set +a
+set -a
+# shellcheck source=/dev/null
+source .env
+set +a
 : "${R2_BUCKET:?set R2_BUCKET in .env}"
 : "${R2_ENDPOINT:?set R2_ENDPOINT in .env}"
 

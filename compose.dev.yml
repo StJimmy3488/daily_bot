@@ -1,0 +1,17 @@
+# Local development database only: docker compose -f compose.dev.yml up -d
+# Creates `planner` (dev) and `planner_test` (pytest) on localhost:5432.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: planner
+      POSTGRES_PASSWORD: planner
+      POSTGRES_DB: planner
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+      - ./scripts/dev-db-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+volumes:
+  pgdata-dev:

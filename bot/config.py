@@ -10,7 +10,8 @@ class Settings(BaseSettings):
 
     bot_token: str
     owner_id: int
-    database_url: str = "sqlite+aiosqlite:///./planner.db"
+    # Local dev default; docker-compose points this at its own Postgres service.
+    database_url: str = "postgresql+asyncpg://planner:planner@localhost:5432/planner"
     timezone: str = "Europe/Riga"
 
     # AI is optional: without a key every flow falls back to the regex parser.

@@ -40,7 +40,9 @@ def _round_up(dt: datetime) -> datetime:
     return dt.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)
 
 
-def _free_gaps(start: datetime, end: datetime, busy: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+def _free_gaps(
+    start: datetime, end: datetime, busy: list[tuple[datetime, datetime]]
+) -> list[tuple[datetime, datetime]]:
     gaps, cursor = [], start
     for b_start, b_end in sorted(busy):
         if b_end <= cursor:

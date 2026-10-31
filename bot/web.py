@@ -38,7 +38,8 @@ async def check_oauth_state(store: SettingsStore, state: str) -> bool:
 def _page(title: str, body: str, status: int = 200) -> HTMLResponse:
     html = f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>{escape(title)}</title>
-<style>body{{font-family:system-ui,sans-serif;max-width:28rem;margin:4rem auto;padding:0 1rem;text-align:center}}</style>
+<style>body{{font-family:system-ui,sans-serif;max-width:28rem;margin:4rem auto;padding:0 1rem;
+text-align:center}}</style>
 </head><body><h2>{escape(title)}</h2><p>{escape(body)}</p></body></html>"""
     return HTMLResponse(html, status_code=status)
 

@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime, time, timedelta
+from itertools import pairwise
 from types import SimpleNamespace
 from urllib.parse import unquote
 
@@ -72,11 +73,22 @@ def test_parse_event_variants():
     all_day = parse_event({"summary": "Trip", "start": {"date": "2026-10-29"}, "end": {"date": "2026-10-30"}}, TZ)
     assert all_day["all_day"] and all_day["start_at"] == datetime(2026, 10, 28, 22, 0, tzinfo=UTC)
 
-    free = parse_event({"start": {"dateTime": "2026-10-29T10:00:00Z"}, "end": {"dateTime": "2026-10-29T11:00:00Z"}, "transparency": "transparent"}, TZ)
+    free = parse_event(
+        {
+            "start": {"dateTime": "2026-10-29T10:00:00Z"},
+            "end": {"dateTime": "2026-10-29T11:00:00Z"},
+            "transparency": "transparent",
+        },
+        TZ,
+    )
     assert free["busy"] is False and free["title"] == "(no title)"
 
     assert parse_event({"status": "cancelled"}, TZ) is None
-    declined = {"start": {"dateTime": "2026-10-29T10:00:00Z"}, "end": {"dateTime": "2026-10-29T11:00:00Z"}, "attendees": [{"self": True, "responseStatus": "declined"}]}
+    declined = {
+        "start": {"dateTime": "2026-10-29T10:00:00Z"},
+        "end": {"dateTime": "2026-10-29T11:00:00Z"},
+        "attendees": [{"self": True, "responseStatus": "declined"}],
+    }
     assert parse_event(declined, TZ) is None
 
 
@@ -85,7 +97,11 @@ class FakeGcal:
         self.events_by_cal = events_by_cal
 
     async def list_calendars(self, token):
-        return [{"id": "primary@x", "primary": True}, {"id": "hidden", "selected": False}, {"id": "work", "selected": True}]
+        return [
+            {"id": "primary@x", "primary": True},
+            {"id": "hidden", "selected": False},
+            {"id": "work", "selected": True},
+        ]
 
     async def list_events(self, token, calendar_id, start, end):
         return self.events_by_cal.get(unquote(calendar_id), [])  # ids arrive URL-encoded
@@ -102,13 +118,22 @@ def _event(event_id, start: datetime, minutes=30, title="Meeting"):
 
 async def test_sync_upserts_and_deletes(session):
     soon = datetime.now(TZ).replace(microsecond=0) + timedelta(hours=2)
-    gcal = FakeGcal({"primary@x": [_event("a", soon), _event("b", soon)], "work": [_event("c", soon)], "hidden": [_event("h", soon)]})
+    gcal = FakeGcal(
+        {
+            "primary@x": [_event("a", soon), _event("b", soon)],
+            "work": [_event("c", soon)],
+            "hidden": [_event("h", soon)],
+        }
+    )
     assert await sync_calendar(session, gcal, "token", TZ) == 3
     await session.flush()
 
     a = (await session.scalars(select(CalendarEvent).where(CalendarEvent.event_id == "a"))).one()
     a.notified_at = datetime.now(UTC)
-    gcal.events_by_cal = {"primary@x": [_event("a", soon + timedelta(hours=1), title="Moved")], "work": [_event("c", soon)]}
+    gcal.events_by_cal = {
+        "primary@x": [_event("a", soon + timedelta(hours=1), title="Moved")],
+        "work": [_event("c", soon)],
+    }
     assert await sync_calendar(session, gcal, "token", TZ) == 2
     await session.flush()
 
@@ -149,7 +174,7 @@ def test_fit_day_never_overlaps_meetings():
     assert placed[4] == (time(13), time(13, 15))  # fixed-time task stays put
     assert [t.id for t in plan.unplaced] == [3]
     busy = sorted((b.start, b.end) for b in plan.blocks)
-    assert all(a_end <= b_start for (_, a_end), (b_start, _) in zip(busy, busy[1:]))  # no overlaps at all
+    assert all(a_end <= b_start for (_, a_end), (b_start, _) in pairwise(busy))  # no overlaps at all
 
 
 def test_fit_day_starts_from_now_today():

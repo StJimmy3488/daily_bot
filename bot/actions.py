@@ -98,5 +98,7 @@ async def apply(repo: TaskRepo, action: Action, today: date) -> Task | None:
 async def create_event(gcal: GoogleCalendar, refresh_token: str, action: EventAction, tz: ZoneInfo) -> str | None:
     """Write a confirmed event to the primary calendar. Returns its link."""
     start = datetime.combine(action.day, action.start, tzinfo=tz)
-    created = await gcal.insert_event(refresh_token, action.title, start, start + timedelta(minutes=action.minutes), str(tz))
+    created = await gcal.insert_event(
+        refresh_token, action.title, start, start + timedelta(minutes=action.minutes), str(tz)
+    )
     return created.get("htmlLink")

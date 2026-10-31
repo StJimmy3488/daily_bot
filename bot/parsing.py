@@ -9,19 +9,41 @@ from dataclasses import dataclass
 from datetime import date, time, timedelta
 
 RELATIVE_DAYS = {
-    "today": 0, "tod": 0, "сегодня": 0,
-    "tomorrow": 1, "tmr": 1, "tmrw": 1, "завтра": 1,
+    "today": 0,
+    "tod": 0,
+    "сегодня": 0,
+    "tomorrow": 1,
+    "tmr": 1,
+    "tmrw": 1,
+    "завтра": 1,
     "послезавтра": 2,
 }
 
 WEEKDAYS = {
-    "mon": 0, "monday": 0, "пн": 0,
-    "tue": 1, "tues": 1, "tuesday": 1, "вт": 1,
-    "wed": 2, "wednesday": 2, "ср": 2,
-    "thu": 3, "thur": 3, "thurs": 3, "thursday": 3, "чт": 3,
-    "fri": 4, "friday": 4, "пт": 4,
-    "sat": 5, "saturday": 5, "сб": 5,
-    "sun": 6, "sunday": 6, "вс": 6,
+    "mon": 0,
+    "monday": 0,
+    "пн": 0,
+    "tue": 1,
+    "tues": 1,
+    "tuesday": 1,
+    "вт": 1,
+    "wed": 2,
+    "wednesday": 2,
+    "ср": 2,
+    "thu": 3,
+    "thur": 3,
+    "thurs": 3,
+    "thursday": 3,
+    "чт": 3,
+    "fri": 4,
+    "friday": 4,
+    "пт": 4,
+    "sat": 5,
+    "saturday": 5,
+    "сб": 5,
+    "sun": 6,
+    "sunday": 6,
+    "вс": 6,
 }
 
 # Dangling words left behind after stripping a trailing date: "call bank on fri"

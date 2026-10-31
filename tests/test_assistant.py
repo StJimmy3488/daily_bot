@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
@@ -28,18 +29,25 @@ def test_action_from_tool_create_and_update():
     )
     assert a == CreateAction(title="Call mom", due_date=date(2026, 10, 30), due_time=time(19), priority=2)
 
-    u = action_from_tool("update_task", {"id": 5, "title": "", "date": "inbox", "time": "", "priority": 0, "repeat": ""})
+    u = action_from_tool(
+        "update_task", {"id": 5, "title": "", "date": "inbox", "time": "", "priority": 0, "repeat": ""}
+    )
     assert u == UpdateAction(id=5, unschedule=True)
 
     r = action_from_tool(
-        "create_task", {"title": "Rent", "date": "", "time": "", "priority": 2, "repeat": "rrule:freq=monthly;bymonthday=1"}
+        "create_task",
+        {"title": "Rent", "date": "", "time": "", "priority": 2, "repeat": "rrule:freq=monthly;bymonthday=1"},
     )
     assert r.recurrence == "FREQ=MONTHLY;BYMONTHDAY=1"
 
-    stop = action_from_tool("update_task", {"id": 5, "title": "", "date": "", "time": "", "priority": 0, "repeat": "none"})
+    stop = action_from_tool(
+        "update_task", {"id": 5, "title": "", "date": "", "time": "", "priority": 0, "repeat": "none"}
+    )
     assert stop.stop_repeating and stop.recurrence is None
 
-    e = action_from_tool("create_calendar_event", {"title": "Audit", "date": "2026-10-30", "start": "10:00", "minutes": 120})
+    e = action_from_tool(
+        "create_calendar_event", {"title": "Audit", "date": "2026-10-30", "start": "10:00", "minutes": 120}
+    )
     assert e == EventAction(title="Audit", day=date(2026, 10, 30), start=time(10), minutes=120)
     assert action_from_tool("plan_day", {}) == PlanDayAction()
 
@@ -96,8 +104,14 @@ async def test_apply_actions(repo):
 
 def test_describe():
     tasks = {7: SimpleNamespace(title="Dentist", due_date=TODAY)}
-    assert task_actions.describe(CreateAction(title="Gym", due_date=TODAY, due_time=time(18)), {}, TODAY) == "➕ Gym · today 18:00"
-    assert task_actions.describe(UpdateAction(id=7, due_date=TODAY + timedelta(days=1)), tasks, TODAY) == "✏️ Dentist: → tomorrow"
+    assert (
+        task_actions.describe(CreateAction(title="Gym", due_date=TODAY, due_time=time(18)), {}, TODAY)
+        == "➕ Gym · today 18:00"
+    )
+    assert (
+        task_actions.describe(UpdateAction(id=7, due_date=TODAY + timedelta(days=1)), tasks, TODAY)
+        == "✏️ Dentist: → tomorrow"
+    )
     assert task_actions.describe(CompleteAction(id=8), tasks, TODAY) == "✅ #8 (missing)"
 
 
@@ -119,10 +133,14 @@ async def test_interpret_parses_tool_calls_and_cost():
             SimpleNamespace(type="thinking", thinking=""),
             SimpleNamespace(type="text", text="Got it."),
             SimpleNamespace(
-                type="tool_use", name="create_task", input={"title": "Buy milk", "date": "", "time": "", "priority": 2, "repeat": ""}
+                type="tool_use",
+                name="create_task",
+                input={"title": "Buy milk", "date": "", "time": "", "priority": 2, "repeat": ""},
             ),
             SimpleNamespace(
-                type="tool_use", name="create_task", input={"title": "bad", "date": "nope", "time": "", "priority": 2, "repeat": ""}
+                type="tool_use",
+                name="create_task",
+                input={"title": "bad", "date": "nope", "time": "", "priority": 2, "repeat": ""},
             ),
             SimpleNamespace(type="tool_use", name="complete_task", input={"id": 4}),
         ],
@@ -150,7 +168,21 @@ async def test_order_day_uses_fallbacks_on_opus_and_fills_gaps(repo):
         stop_reason="end_turn",
         model="claude-opus-5-5",
         usage=SimpleNamespace(input_tokens=500, output_tokens=100),
-        content=[SimpleNamespace(type="text", text=f'{{"order": [{{"id": {b.id}, "minutes": 999}}, {{"id": 12345, "minutes": 5}}, {{"id": {a.id}, "minutes": 60}}], "note": "Go"}}')],
+        content=[
+            SimpleNamespace(
+                type="text",
+                text=json.dumps(
+                    {
+                        "order": [
+                            {"id": b.id, "minutes": 999},
+                            {"id": 12345, "minutes": 5},
+                            {"id": a.id, "minutes": 60},
+                        ],
+                        "note": "Go",
+                    }
+                ),
+            )
+        ],
     )
     fake = FakeMessages(response)
     assistant = Assistant("test-key", "claude-haiku-5-5", "claude-opus-5-5")
