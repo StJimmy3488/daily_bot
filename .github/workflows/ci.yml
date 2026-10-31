@@ -115,6 +115,29 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Check the VPS host key
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          # Fail early with a useful message instead of ssh's "Host key verification failed".
+          # Host keys and their fingerprints are public, so printing them is safe.
+          if ! ssh-keygen -F "$VPS_HOST" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "::error::VPS_KNOWN_HOSTS has no key line for VPS_HOST. Regenerate it with: ssh-keyscan <VPS_HOST> (same value as the VPS_HOST secret)"
+            exit 1
+          fi
+          server_keys=$(ssh-keyscan -T 10 "$VPS_HOST" 2>/dev/null)
+          if [ -z "$server_keys" ]; then
+            echo "::error::Couldn't reach SSH on VPS_HOST port 22 to read its host key"
+            exit 1
+          fi
+          if ! grep -qxFf <(awk '!/^#/ && NF {print $2, $3}' ~/.ssh/known_hosts) <(awk '{print $2, $3}' <<<"$server_keys"); then
+            echo "::error::None of the keys in VPS_KNOWN_HOSTS match the server. Server presents:"
+            ssh-keygen -lf - <<<"$server_keys"
+            echo "VPS_KNOWN_HOSTS contains:"
+            ssh-keygen -lf ~/.ssh/known_hosts
+            exit 1
+          fi
+          echo "Host key matches."
       - name: Upload compose files
         env:
           TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
