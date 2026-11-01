@@ -5,3 +5,6 @@
 *.db
 __pycache__
 .pytest_cache
+webapp/node_modules
+webapp/dist
+webapp/.env.local

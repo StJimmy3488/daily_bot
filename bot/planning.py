@@ -18,7 +18,7 @@ from bot.formatting import PRIORITY_MARK, format_event, format_line, format_task
 from bot.keyboards import brief_kb, ping_kb, proposal_kb, review_kb
 from bot.repo import TaskRepo
 from bot.settings_store import SettingsStore
-from bot.smart_plan import default_order, fit_day
+from bot.smart_plan import DayPlanResult, default_order, fit_day
 
 log = logging.getLogger(__name__)
 
@@ -141,20 +141,22 @@ async def send_meeting_headsups(bot: Bot, chat_id: int, repo: TaskRepo, store: S
         event.notified_at = now
 
 
-async def send_smart_plan(
-    bot: Bot, chat_id: int, repo: TaskRepo, store: SettingsStore, assistant: Assistant | None, today: date
-) -> None:
-    """Order today's tasks (Claude if available), fit them around meetings, offer to set the times."""
+async def compute_smart_plan(
+    repo: TaskRepo, store: SettingsStore, assistant: Assistant | None, day: date
+) -> tuple[DayPlanResult, str, tuple[time, time]]:
+    """Order the day's open tasks (Claude if available) and fit them around meetings."""
     now = datetime.now(repo.tz)
-    tasks = await repo.list_today(today)
-    events = await repo.events_on(today)
+    today = now.date()
+    tasks = (
+        await repo.list_today(day)
+        if day == today
+        else [t for t in await repo.tasks_between(day, day) if t.status == TaskStatus.TODO]
+    )
+    events = await repo.events_on(day)
     work = await store.work_hours()
-    if not tasks:
-        await bot.send_message(chat_id, "Nothing to plan — no open tasks for today. Check /inbox.")
-        return
 
     order, minutes, note = default_order(tasks), {}, ""
-    if assistant is not None:
+    if assistant is not None and tasks:
         try:
             result = await assistant.order_day(tasks, events, work, now)
             await repo.log_ai_call(result.model, "plan", result.input_tokens, result.output_tokens, result.cost_usd)
@@ -166,7 +168,18 @@ async def send_smart_plan(
         if task.est_minutes is None and task.id in minutes:
             task.est_minutes = minutes[task.id]  # remember the estimate for next time
 
-    plan = fit_day(today, order, minutes, events, work, repo.tz, now)
+    return fit_day(day, order, minutes, events, work, repo.tz, now), note, work
+
+
+async def send_smart_plan(
+    bot: Bot, chat_id: int, repo: TaskRepo, store: SettingsStore, assistant: Assistant | None, today: date
+) -> None:
+    """Smart plan in chat, with a proposal to set each task's time."""
+    plan, note, work = await compute_smart_plan(repo, store, assistant, today)
+    if not plan.blocks and not plan.unplaced:
+        await bot.send_message(chat_id, "Nothing to plan — no open tasks for today. Check /inbox.")
+        return
+
     lines = [f"🧠 <b>Smart plan — {today:%a %d.%m}</b> <i>(work {work[0]:%H:%M}–{work[1]:%H:%M})</i>", ""]
     for block in plan.blocks:
         icon = "📅" if block.is_meeting else ("⏰" if block.task.due_time else "▫️")
@@ -189,7 +202,7 @@ async def send_smart_plan(
         return
     lines += ["", "Save to get a reminder at the start of each slot:"]
     proposal = await repo.create_proposal(dump_actions(actions))
-    by_id = {t.id: t for t in tasks}
+    by_id = {b.task.id: b.task for b in plan.blocks if b.task is not None}
     labels = [task_actions.describe(a, by_id, today) for a in actions]
     await bot.send_message(
         chat_id, "\n".join(lines), reply_markup=proposal_kb(proposal.id, labels, set(proposal.selected))

@@ -81,6 +81,23 @@ class TaskRepo:
         )
         return list(await self.session.scalars(stmt))
 
+    async def tasks_between(self, first: date, last: date) -> list[Task]:
+        """Open and done (not dropped) tasks due in [first, last], for the Mini App."""
+        stmt = (
+            select(Task)
+            .where(Task.status != TaskStatus.DROPPED, Task.due_date >= first, Task.due_date <= last)
+            .order_by(Task.due_date, Task.due_time.is_(None), Task.due_time, Task.priority, Task.id)
+        )
+        return list(await self.session.scalars(stmt))
+
+    async def overdue(self, today: date) -> list[Task]:
+        stmt = (
+            select(Task)
+            .where(Task.status == TaskStatus.TODO, Task.due_date < today)
+            .order_by(Task.due_date, Task.priority, Task.id)
+        )
+        return list(await self.session.scalars(stmt))
+
     async def list_open(self) -> list[Task]:
         """All open tasks, dated first, for the LLM prompt."""
         stmt = (
@@ -118,10 +135,24 @@ class TaskRepo:
         await self._sync_reminder(task)
         return await self._spawn_next(task)
 
-    async def reschedule(self, task: Task, new_date: date | None, new_time: time | None = None) -> None:
+    async def reopen(self, task: Task) -> None:
+        """Undo done/drop. Recurring tasks are refused: their next occurrence already exists."""
+        if task.recurrence_rule:
+            raise ValueError("recurring tasks can't be reopened")
+        task.status = TaskStatus.TODO
+        task.done_at = None
+        await self._log(task, "reopened")
+        await self._sync_reminder(task)
+
+    async def reschedule(
+        self, task: Task, new_date: date | None, new_time: time | None = None, clear_time: bool = False
+    ) -> None:
+        """Move a task. `new_time=None` keeps its time unless `clear_time` is set."""
         old = task.due_date
         task.due_date = new_date
-        if new_time is not None:
+        if clear_time:
+            task.due_time = None
+        elif new_time is not None:
             task.due_time = new_time
         await self._log(
             task,
