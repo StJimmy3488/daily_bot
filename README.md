@@ -54,7 +54,7 @@ GitHub can't show them again.
 | Secret | `VPS_SSH_KEY` | private key of a CI-only key pair; its `.pub` goes into the VPS `~/.ssh/authorized_keys` |
 | Secret | `VPS_KNOWN_HOSTS` | output of `ssh-keyscan 2.31.133.165` |
 | Secret | `BOT_TOKEN` | required |
-| Secret | `POSTGRES_PASSWORD` | required — see note below |
+| Secret | `POSTGRES_PASSWORD` | required; applied to the database on every deploy |
 | Secret | `ANTHROPIC_API_KEY`, `GOOGLE_CLIENT_SECRET` | optional |
 | Variable | `OWNER_ID`, `DOMAIN` | required |
 | Variable | `TIMEZONE`, `AI_MODEL`, `AI_PLAN_MODEL`, `WHISPER_MODEL`, `GOOGLE_CLIENT_ID`, `R2_BUCKET`, `R2_ENDPOINT`, `VPS_APP_DIR` | optional; unset means the app default |
@@ -62,9 +62,9 @@ GitHub can't show them again.
 To rotate a key, change it in GitHub and re-run the latest deploy job. Values can't contain a single
 quote or a newline (the job fails with a clear error).
 
-**`POSTGRES_PASSWORD`** is only applied when the database volume is first created. To change it
-later, also run on the VPS:
-`docker compose exec db psql -U planner -c "ALTER USER planner PASSWORD '<new>'"`, then redeploy.
+**`POSTGRES_PASSWORD`**: Postgres itself only reads it when the volume is first created, so every
+deploy also runs `ALTER USER planner PASSWORD …` (over the container's local socket) to keep the
+database in sync. Rotating it is just editing the secret and redeploying.
 
 Roll back by re-running the deploy job of an earlier commit.
 
