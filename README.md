@@ -54,7 +54,7 @@ GitHub can't show them again.
 | Secret | `VPS_SSH_KEY` | private key of a CI-only key pair; its `.pub` goes into the VPS `~/.ssh/authorized_keys` |
 | Secret | `VPS_KNOWN_HOSTS` | output of `ssh-keyscan 2.31.133.165` |
 | Secret | `BOT_TOKEN` | required |
-| Secret | `POSTGRES_PASSWORD` | required — see note below |
+| Secret | `POSTGRES_PASSWORD` | required; applied to the database on every deploy |
 | Secret | `ANTHROPIC_API_KEY`, `GOOGLE_CLIENT_SECRET` | optional |
 | Variable | `OWNER_ID`, `DOMAIN` | required |
 | Variable | `TIMEZONE`, `AI_MODEL`, `AI_PLAN_MODEL`, `WHISPER_MODEL`, `GOOGLE_CLIENT_ID`, `R2_BUCKET`, `R2_ENDPOINT`, `VPS_APP_DIR` | optional; unset means the app default |
@@ -62,21 +62,51 @@ GitHub can't show them again.
 To rotate a key, change it in GitHub and re-run the latest deploy job. Values can't contain a single
 quote or a newline (the job fails with a clear error).
 
-**`POSTGRES_PASSWORD`** is only applied when the database volume is first created. To change it
-later, also run on the VPS:
-`docker compose exec db psql -U planner -c "ALTER USER planner PASSWORD '<new>'"`, then redeploy.
+**`POSTGRES_PASSWORD`**: Postgres itself only reads it when the volume is first created, so every
+deploy also runs `ALTER USER planner PASSWORD …` (over the container's local socket) to keep the
+database in sync. Rotating it is just editing the secret and redeploying.
 
 Roll back by re-running the deploy job of an earlier commit.
 
 ## Deploy (VPS)
 
-```bash
-cp .env .env          # fill BOT_TOKEN, OWNER_ID, POSTGRES_PASSWORD
-docker compose up -d --build  # runs migrations on start, long-polling
-```
+Deploys are automatic: every push to `main` that passes CI is deployed (see CI/CD above). The VPS
+only needs Docker, the app directory (`/opt/planner/daily_bot` by default) and ports 80/443 free.
+Manual deploy, if ever needed: `cd /opt/planner/daily_bot && docker compose up -d --build`.
 
-Nightly backup to R2: set `R2_BUCKET` / `R2_ENDPOINT` in `.env`, configure the `aws` CLI,
-and add to crontab: `15 3 * * * cd /opt/planner && ./scripts/backup.sh >> backup.log 2>&1`.
+Caddy serves `https://$DOMAIN` with an automatic Let's Encrypt certificate and proxies to the bot's
+web server (Google OAuth callback now, Mini App in phase 5).
+
+Logs: `docker compose logs -f bot` (or `caddy`, `db`); status: `docker compose ps`.
+
+### Database access
+
+Postgres listens on the VPS's localhost only (`127.0.0.1:5432`), never on the internet.
+
+- Shell on the VPS: `docker compose exec db psql -U planner planner`
+- GUI on your machine (PyCharm Database tool, TablePlus, DBeaver): SSH tunnel to the VPS, then host
+  `localhost`, port `5432`, user `planner`, database `planner`, password `POSTGRES_PASSWORD`.
+  Without a built-in tunnel: `ssh -N -L 5433:localhost:5432 root@<VPS>` and connect to `localhost:5433`.
+
+Timestamps are stored in UTC (`SET timezone = 'Europe/Riga';` in psql to read them locally).
+
+### Google Calendar setup (once)
+
+1. In [Google Cloud Console](https://console.cloud.google.com/) create a project and enable the
+   **Google Calendar API**.
+2. **OAuth consent screen**: External, add yourself as a test user, add the scopes
+   `calendar.readonly` and `calendar.events`. Then **Publish app** ("In production", no verification
+   needed for personal use) — in *Testing* mode Google expires refresh tokens after 7 days.
+3. **Credentials → Create OAuth client ID → Web application**, authorized redirect URI
+   `https://<DOMAIN>/oauth/google/callback`.
+4. Set `GOOGLE_CLIENT_ID` (variable) and `GOOGLE_CLIENT_SECRET` (secret) in the `production`
+   environment, deploy, send `/calendar` and tap **Connect**. Google warns the app is unverified —
+   it's your own app, continue via *Advanced*.
+
+### Backups
+
+Nightly dump to R2/S3: set `R2_BUCKET` / `R2_ENDPOINT`, configure the `aws` CLI on the VPS and add
+to crontab: `15 3 * * * cd /opt/planner/daily_bot && ./scripts/backup.sh >> backup.log 2>&1`.
 
 ## Usage
 
