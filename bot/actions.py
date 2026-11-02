@@ -4,8 +4,22 @@ from datetime import date, datetime, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
 
-from bot.assistant import Action, CompleteAction, CreateAction, DropAction, EventAction, PlanDayAction, UpdateAction
-from bot.db.models import Task, TaskStatus
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from bot.assistant import (
+    Action,
+    CompleteAction,
+    CreateAction,
+    DropAction,
+    EventAction,
+    EventDeleteAction,
+    EventUpdateAction,
+    PlanDayAction,
+    UpdateAction,
+)
+from bot.calendar_edit import EventChange, delete_event, update_event
+from bot.clock import as_utc
+from bot.db.models import CalendarEvent, Task, TaskStatus
 from bot.formatting import PRIORITY_MARK, format_date
 from bot.google_calendar import GoogleCalendar
 from bot.recurrence import describe_rule, first_occurrence
@@ -19,8 +33,24 @@ def _when(d: date | None, t, today: date) -> str:
     return " ".join(parts)
 
 
-def describe(action: Action, tasks: dict[int, Task], today: date) -> str:
+def describe(
+    action: Action, tasks: dict[int, Task], today: date, events: dict[int, CalendarEvent] | None = None
+) -> str:
     """One plain-text line (used in buttons and summaries)."""
+    if isinstance(action, EventDeleteAction | EventUpdateAction):
+        event = (events or {}).get(action.event_id)
+        name = event.title if event else f"event #{action.event_id} (missing)"
+        if isinstance(action, EventDeleteAction):
+            return f"📅🗑 Cancel “{name}”"
+        changes = []
+        if action.title:
+            changes.append(f"“{action.title}”")
+        if action.day or action.start:
+            when = format_date(action.day, today) if action.day else ""
+            changes.append(f"→ {when} {action.start:%H:%M}".replace("  ", " ") if action.start else f"→ {when}")
+        if action.minutes:
+            changes.append(f"{action.minutes} min")
+        return f"📅✏️ {name}: {', '.join(changes) or 'no change'}"
     if isinstance(action, CreateAction):
         line = f"➕ {PRIORITY_MARK[action.priority]}{action.title} · {_when(action.due_date, action.due_time, today)}"
         return line + (f" · 🔁 {describe_rule(action.recurrence)}" if action.recurrence else "")
@@ -53,12 +83,20 @@ def describe(action: Action, tasks: dict[int, Task], today: date) -> str:
     return f"✏️ {name}: {', '.join(changes) or 'no change'}"
 
 
-def preview_text(actions: list[Action], tasks: dict[int, Task], today: date, reply: str) -> str:
+def preview_text(
+    actions: list[Action],
+    tasks: dict[int, Task],
+    today: date,
+    reply: str,
+    events: dict[int, CalendarEvent] | None = None,
+) -> str:
     lines = []
     if reply:
         lines += [escape(reply), ""]
     lines.append("<b>Here's what I understood</b> — tap to include or skip, then save:")
-    lines += [escape(describe(a, tasks, today)) for a in actions]
+    lines += [escape(describe(a, tasks, today, events)) for a in actions]
+    if any((events or {}).get(getattr(a, "event_id", None)) and events[a.event_id].has_guests for a in actions):
+        lines.append("<i>Guests will get Google's update email.</i>")
     return "\n".join(lines)
 
 
@@ -102,3 +140,32 @@ async def create_event(gcal: GoogleCalendar, refresh_token: str, action: EventAc
         refresh_token, action.title, start, start + timedelta(minutes=action.minutes), str(tz)
     )
     return created.get("htmlLink")
+
+
+def event_change(action: EventUpdateAction, event: CalendarEvent, tz: ZoneInfo) -> EventChange:
+    """Turn "move to Friday 15:00 for 30 min" into new start/end (or a new day for all-day events)."""
+    if event.all_day:
+        return EventChange(title=action.title, day=action.day)
+    current = as_utc(event.start_at).astimezone(tz)
+    start = None
+    if action.day or action.start:
+        start = datetime.combine(action.day or current.date(), action.start or current.time(), tzinfo=tz)
+    end = None
+    if action.minutes:
+        end = (start or current) + timedelta(minutes=action.minutes)
+    return EventChange(title=action.title, start=start, end=end)
+
+
+async def apply_event_edit(
+    session: AsyncSession,
+    gcal: GoogleCalendar,
+    token: str,
+    action: EventUpdateAction | EventDeleteAction,
+    event: CalendarEvent,
+    tz: ZoneInfo,
+) -> None:
+    """Raises calendar_edit.EventEditError with a user-facing reason."""
+    if isinstance(action, EventDeleteAction):
+        await delete_event(session, gcal, token, event)
+    else:
+        await update_event(session, gcal, token, event, event_change(action, event, tz), tz)

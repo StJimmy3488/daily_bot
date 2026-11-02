@@ -1,9 +1,10 @@
 """Minimal async Google Calendar client: OAuth (web flow), list calendars/events, insert events."""
 
+import json
 import logging
 import time as monotonic_time
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import aiohttp
 
@@ -23,7 +24,9 @@ class CalendarAuthError(Exception):
 
 
 class CalendarError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 class GoogleCalendar:
@@ -78,12 +81,13 @@ class GoogleCalendar:
         headers = {"Authorization": f"Bearer {token}"}
         async with aiohttp.ClientSession(timeout=self._timeout) as http:
             async with http.request(method, API + path, headers=headers, **kwargs) as resp:
-                body = await resp.json(content_type=None)
+                text = await resp.text()  # DELETE answers 204 with no body
+                body = json.loads(text) if text else {}
                 if resp.status == 401:
                     self._access = None
                     raise CalendarAuthError("unauthorized")
                 if resp.status >= 400:
-                    raise CalendarError(f"{method} {path} -> {resp.status}: {body}")
+                    raise CalendarError(f"{method} {path} -> {resp.status}: {body}", resp.status)
                 return body
 
     async def list_calendars(self, refresh_token: str) -> list[dict]:
@@ -115,3 +119,16 @@ class GoogleCalendar:
             "end": {"dateTime": end.isoformat(), "timeZone": tz},
         }
         return await self._request(refresh_token, "POST", "/calendars/primary/events", json=payload)
+
+    async def patch_event(self, refresh_token: str, calendar_id: str, event_id: str, changes: dict) -> dict:
+        """Change an event (or a single occurrence of a recurring one); guests get Google's update email."""
+        path = f"/calendars/{quote(calendar_id, safe='')}/events/{quote(event_id, safe='')}"
+        return await self._request(refresh_token, "PATCH", path, params={"sendUpdates": "all"}, json=changes)
+
+    async def delete_event(self, refresh_token: str, calendar_id: str, event_id: str) -> None:
+        path = f"/calendars/{quote(calendar_id, safe='')}/events/{quote(event_id, safe='')}"
+        try:
+            await self._request(refresh_token, "DELETE", path, params={"sendUpdates": "all"})
+        except CalendarError as e:
+            if e.status not in (404, 410):  # already gone is fine
+                raise

@@ -2,8 +2,9 @@
 import { onMounted, ref } from "vue";
 
 import { api, ApiError } from "./api";
+import EventSheet from "./components/EventSheet.vue";
 import TaskSheet from "./components/TaskSheet.vue";
-import { focusDay, meta, sheet, toast } from "./store";
+import { eventSheet, focusDay, meta, sheet, toast } from "./store";
 import { haptic, initData, tg } from "./telegram";
 import DayView from "./views/DayView.vue";
 import InboxView from "./views/InboxView.vue";
@@ -75,6 +76,8 @@ onMounted(async () => {
       :task="sheet.mode === 'edit' ? sheet.task : null"
       :day="sheet.mode === 'new' ? sheet.day : null"
     />
+
+    <EventSheet v-if="eventSheet" :key="eventSheet.id" :event="eventSheet" />
 
     <div v-if="toast.text" class="toast">
       <span>{{ toast.text }}</span>

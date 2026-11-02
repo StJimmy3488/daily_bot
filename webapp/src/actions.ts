@@ -2,7 +2,7 @@ import { api, ApiError } from "./api";
 import { shortDay } from "./dates";
 import { changed, showToast } from "./store";
 import { confirm, haptic } from "./telegram";
-import type { Task, TaskInput } from "./types";
+import type { CalendarEvent, EventPatch, Task, TaskInput } from "./types";
 
 function fail(e: unknown) {
   haptic.error();
@@ -65,6 +65,35 @@ export async function createTask(input: TaskInput): Promise<boolean> {
     await api.create(input);
     haptic.success();
     changed();
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+export async function editEvent(event: CalendarEvent, patch: EventPatch): Promise<boolean> {
+  try {
+    await api.updateEvent(event.id, patch);
+    haptic.success();
+    changed();
+    showToast(event.has_guests ? "Updated · guests notified" : "Updated in Google Calendar");
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+export async function deleteEvent(event: CalendarEvent): Promise<boolean> {
+  const scope = event.recurring ? " (this occurrence only)" : "";
+  const guests = event.has_guests ? " Guests will be notified." : "";
+  if (!(await confirm(`Delete “${event.title}”${scope} from Google Calendar?${guests}`))) return false;
+  try {
+    await api.deleteEvent(event.id);
+    haptic.tap();
+    changed();
+    showToast("Deleted from Google Calendar");
     return true;
   } catch (e) {
     fail(e);

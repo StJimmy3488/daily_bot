@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import planning
+from bot.calendar_edit import EventChange, EventEditError, delete_event, update_event
 from bot.clock import as_utc, local_today
 from bot.db.models import CalendarEvent, Task, TaskStatus
 from bot.recurrence import describe_rule, first_occurrence, normalize_rule
@@ -83,6 +84,19 @@ class EventOut(BaseModel):
     end: str
     all_day: bool
     link: str | None
+    editable: bool  # false when you're only a guest
+    recurring: bool  # changes apply to this occurrence only
+    has_guests: bool  # guests get Google's update email
+
+
+class EventPatch(BaseModel):
+    """Timed events: send start and/or end (local, "YYYY-MM-DDTHH:MM"); moving the start keeps the length.
+    All-day events: send day."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    start: datetime | None = None
+    end: datetime | None = None
+    day: date | None = None
 
 
 class DayOut(BaseModel):
@@ -199,6 +213,9 @@ def event_out(e: CalendarEvent, tz) -> EventOut:
         end=f"{end:%Y-%m-%dT%H:%M}",
         all_day=e.all_day,
         link=e.link,
+        editable=e.editable,
+        recurring=e.recurring,
+        has_guests=e.has_guests,
     )
 
 
@@ -362,3 +379,40 @@ async def apply_plan(ctx: Ctx, body: PlanApply) -> list[TaskOut]:
         await ctx.repo.reschedule(task, body.date, item.time)
         updated.append(task_out(task))
     return updated
+
+
+async def _editable_event(ctx: ApiContext, request: Request, event_id: int):
+    gcal = request.app.state.gcal
+    token = await ctx.store.get("google_refresh_token")
+    if gcal is None or not token:
+        raise HTTPException(409, "Google Calendar isn't connected")
+    event = await ctx.repo.get_event(event_id)
+    if event is None:
+        raise HTTPException(404, "Event not found — it may have been deleted in Google Calendar")
+    return gcal, token, event
+
+
+@router.patch("/events/{event_id}")
+async def edit_event(ctx: Ctx, request: Request, event_id: int, body: EventPatch) -> EventOut:
+    gcal, token, event = await _editable_event(ctx, request, event_id)
+    tz = ctx.repo.tz
+    change = EventChange(
+        title=body.title.strip() if body.title else None,
+        start=body.start.replace(tzinfo=tz) if body.start else None,
+        end=body.end.replace(tzinfo=tz) if body.end else None,
+        day=body.day,
+    )
+    try:
+        event = await update_event(ctx.repo.session, gcal, token, event, change, tz)
+    except EventEditError as e:
+        raise HTTPException(409, str(e)) from e
+    return event_out(event, tz)
+
+
+@router.delete("/events/{event_id}", status_code=204)
+async def remove_event(ctx: Ctx, request: Request, event_id: int) -> None:
+    gcal, token, event = await _editable_event(ctx, request, event_id)
+    try:
+        await delete_event(ctx.repo.session, gcal, token, event)
+    except EventEditError as e:
+        raise HTTPException(409, str(e)) from e

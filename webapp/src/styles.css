@@ -238,6 +238,8 @@ main {
 }
 .event {
   display: block;
+  width: 100%;
+  text-align: left;
   background: color-mix(in srgb, var(--accent) 14%, var(--section));
   border-radius: var(--radius);
   padding: 10px 12px;
@@ -297,8 +299,15 @@ main {
   font-size: 11px;
 }
 .event-line {
+  display: block;
+  width: 100%;
+  text-align: left;
   font-size: 13px;
-  padding: 2px 4px;
+  padding: 3px 4px;
+  border-radius: 6px;
+}
+.event-line:active {
+  background: var(--bg2);
 }
 .event-line .time {
   color: var(--hint);
@@ -530,4 +539,19 @@ main {
 }
 .toast .link {
   color: #8ecbff;
+}
+
+/* event sheet */
+.event-title {
+  font-size: 17px;
+}
+.quarter {
+  flex: 0 0 26%;
+  min-width: 0;
+}
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--link);
+  text-decoration: none;
 }

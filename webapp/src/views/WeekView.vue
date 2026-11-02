@@ -6,7 +6,7 @@ import { updateTask } from "../actions";
 import { api } from "../api";
 import TaskRow from "../components/TaskRow.vue";
 import { addDays, shortDay, timeOf } from "../dates";
-import { focusDay, meta, sheet, showToast, version } from "../store";
+import { eventSheet, focusDay, meta, sheet, showToast, version } from "../store";
 import { haptic } from "../telegram";
 import type { Week } from "../types";
 
@@ -84,9 +84,9 @@ onBeforeUnmount(() => sortables.forEach((s) => s.destroy()));
         </button>
         <button class="icon small" aria-label="Add task" @click="sheet = { mode: 'new', day: d.date }">+</button>
       </div>
-      <div v-for="e in d.events" :key="'e' + e.id" class="event-line">
+      <button v-for="e in d.events" :key="'e' + e.id" class="event-line" @click="eventSheet = e">
         <span class="time">{{ e.all_day ? "all day" : timeOf(e.start) }}</span> {{ e.title }}
-      </div>
+      </button>
       <div ref="lists" class="drop-list" :data-date="d.date">
         <TaskRow v-for="t in d.tasks" :key="t.id" :task="t" />
       </div>

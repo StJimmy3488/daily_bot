@@ -87,6 +87,7 @@ def create_app(
     app.state.owner_id = chat_id  # private chat id == user id
     app.state.tz = tz
     app.state.assistant = assistant
+    app.state.gcal = gcal
     app.include_router(api_router)
     if WEBAPP_DIST.is_dir():
         app.mount(WEBAPP_PATH, WebAppFiles(directory=WEBAPP_DIST, html=True), name="webapp")

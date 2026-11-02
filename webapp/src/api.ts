@@ -1,5 +1,5 @@
 import { initData } from "./telegram";
-import type { Closed, DayView, Meta, Plan, Task, TaskInput, Week } from "./types";
+import type { CalendarEvent, Closed, DayView, EventPatch, Meta, Plan, Task, TaskInput, Week } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -29,6 +29,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
     throw new ApiError(res.status, message);
   }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -50,4 +51,6 @@ export const api = {
   plan: (day?: string) => request<Plan>("POST", `/plan${q({ day })}`),
   applyPlan: (date: string, items: { task_id: number; time: string }[]) =>
     request<Task[]>("POST", "/plan/apply", { date, items }),
+  updateEvent: (id: number, patch: EventPatch) => request<CalendarEvent>("PATCH", `/events/${id}`, patch),
+  deleteEvent: (id: number) => request<void>("DELETE", `/events/${id}`),
 };
