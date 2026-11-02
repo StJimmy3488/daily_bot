@@ -1,17 +1,24 @@
-"""HTTP side of the bot: health check and the Google OAuth callback (Mini App comes in phase 5)."""
+"""HTTP side of the bot: health check, Google OAuth callback, Mini App (static files + JSON API)."""
 
 import contextlib
 import logging
 import secrets
 from datetime import datetime, timedelta
 from html import escape
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import uvicorn
 from aiogram import Bot
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from starlette.responses import Response
+from starlette.types import Scope
 
+from bot.api import router as api_router
+from bot.assistant import Assistant
 from bot.clock import utcnow
 from bot.google_calendar import CALLBACK_PATH, CalendarError, GoogleCalendar
 from bot.settings_store import SettingsStore
@@ -19,6 +26,24 @@ from bot.settings_store import SettingsStore
 log = logging.getLogger(__name__)
 
 STATE_TTL = timedelta(minutes=15)
+WEBAPP_DIST = Path(__file__).resolve().parent.parent / "webapp" / "dist"
+WEBAPP_PATH = "/app"
+
+
+def webapp_url(public_url: str) -> str:
+    return f"{public_url.rstrip('/')}{WEBAPP_PATH}/"
+
+
+class WebAppFiles(StaticFiles):
+    """Hashed assets cache forever; index.html never, so a deploy shows up on the next open."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        if path.startswith("assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 async def new_oauth_state(store: SettingsStore) -> str:
@@ -45,9 +70,28 @@ text-align:center}}</style>
 
 
 def create_app(
-    bot: Bot, sessionmaker: async_sessionmaker, chat_id: int, gcal: GoogleCalendar | None, on_connected
+    bot: Bot,
+    sessionmaker: async_sessionmaker,
+    chat_id: int,
+    gcal: GoogleCalendar | None,
+    on_connected,
+    *,
+    bot_token: str,
+    tz: ZoneInfo,
+    assistant: Assistant | None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    # Used by the Mini App API (bot/api.py).
+    app.state.sessionmaker = sessionmaker
+    app.state.bot_token = bot_token
+    app.state.owner_id = chat_id  # private chat id == user id
+    app.state.tz = tz
+    app.state.assistant = assistant
+    app.include_router(api_router)
+    if WEBAPP_DIST.is_dir():
+        app.mount(WEBAPP_PATH, WebAppFiles(directory=WEBAPP_DIST, html=True), name="webapp")
+    else:
+        log.warning("Mini App not built (%s missing); run `npm run build` in webapp/", WEBAPP_DIST)
 
     @app.get("/health")
     async def health() -> dict:

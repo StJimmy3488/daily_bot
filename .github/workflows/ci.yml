@@ -25,6 +25,21 @@ jobs:
       - run: uv run ruff check
       - run: uv run ruff format --check .
 
+  webapp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - run: npm ci
+      - run: npm run build # vue-tsc type check + vite build
+
   test:
     runs-on: ubuntu-latest
     services:
@@ -63,7 +78,7 @@ jobs:
       - run: uv run pytest -q
 
   image:
-    needs: [lint, test]
+    needs: [lint, test, webapp]
     runs-on: ubuntu-latest
     permissions:
       contents: read

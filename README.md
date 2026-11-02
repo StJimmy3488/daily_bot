@@ -1,7 +1,7 @@
 # Personal Planner Bot
 
 Single-user Telegram bot that captures tasks, plans the day and pings at the right time.
-Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL 16 · FastAPI · Caddy.
+Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL 16 · FastAPI · Caddy · Vue 3 Mini App.
 
 ## Status
 
@@ -10,7 +10,8 @@ Stack: aiogram 3 · SQLAlchemy 2 (async) · Alembic · PostgreSQL 16 · FastAPI 
 - [x] Phase 2 — scheduler, morning brief, reminders, evening review, /focus, rollover
 - [x] Phase 3 — Claude parsing, local voice transcription, natural edits and questions
 - [x] Phase 4 — Google Calendar sync and write-back, meeting heads-ups, smart plan, recurring tasks
-- [ ] Phase 5 — Mini App, weekly review
+- [x] Phase 5 — Mini App (day / week / inbox, editing, drag between days, smart plan)
+- [ ] Weekly review, templates
 
 ## Local run
 
@@ -26,6 +27,19 @@ uv run python -m bot
 uv run pytest                 # uses TEST_DATABASE_URL, default .../planner_test
 uv run ruff check && uv run ruff format .
 ```
+
+Mini App (Vue 3 + Vite, in `webapp/`):
+
+```bash
+cd webapp && npm ci
+npm run build                 # -> webapp/dist, served by the bot at /app/
+# or live-reload against a locally running bot (API proxied to :8080):
+echo "VITE_DEV_INIT_DATA=$(cd .. && uv run python -m bot.dev_init_data)" > .env.local
+npm run dev                   # http://localhost:5173/app/ in a normal browser
+```
+
+`bot.dev_init_data` signs Telegram init data with your own bot token, so the browser is
+authenticated exactly like Telegram would — there's no auth bypass in the app.
 
 ## CI/CD
 
@@ -110,6 +124,19 @@ to crontab: `15 3 * * * cd /opt/planner/daily_bot && ./scripts/backup.sh >> back
 
 ## Usage
 
+**Mini App (Phase 5).** The bot's menu button (or `/app`) opens a visual planner inside Telegram:
+
+- **Day** — meetings and timed tasks on one timeline with a "now" line, overdue and anytime tasks,
+  done ones collapsed; ‹ › to move between days; ✨ Smart plan previews time slots and sets them.
+- **Week** — the next 7 days with meetings; hold a task and drag it onto another day to move it.
+- **Inbox** — undated tasks with one-tap Today / Tomorrow.
+- Tap a task to edit title, day, time, duration, priority, repeat and notes; tick to complete (with
+  Undo); **+** adds a task to the day you're looking at.
+
+It follows Telegram's light/dark theme. Every API call is authenticated with Telegram's signed init
+data (HMAC with the bot token), only accepted for `OWNER_ID` and for 24 hours. All changes go through
+the same code as the chat, so reminders, recurring tasks and history behave identically.
+
 **Natural language and voice (Phase 3).** With `ANTHROPIC_API_KEY` set, every text and voice note
 goes to Claude (`AI_MODEL`, default Haiku 5.5): *"remind me to call mom tomorrow at 7, buy milk, and
 the dentist moved to Friday"*. Voice notes are transcribed locally with faster-whisper
@@ -174,7 +201,9 @@ bot/
   calendar_sync.py  mirror events into calendar_events
   smart_plan.py     fit tasks into free time around meetings
   recurrence.py     RRULE helpers
-  web.py            FastAPI app (health, OAuth callback) served by uvicorn in-process
+  web.py            FastAPI app (health, OAuth callback, Mini App) served by uvicorn in-process
+  api.py            Mini App JSON API, Telegram init-data auth
+  dev_init_data.py  sign init data for local Mini App development
   planning.py       morning brief, plan accept, evening review, reminder delivery
   scheduler.py      APScheduler jobs + startup catch-up
   settings_store.py settings table, quiet hours / focus
@@ -185,5 +214,6 @@ bot/
                     calendar (/calendar, /smartplan), capture (text, voice, replies, AI previews)
   db/               models, engine
 migrations/         Alembic
+webapp/             Mini App: Vue 3 + TypeScript + Vite (views/, components/, api.ts)
 scripts/backup.sh   pg_dump -> R2
 ```

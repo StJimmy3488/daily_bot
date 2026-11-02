@@ -3,7 +3,8 @@ from datetime import date, time
 from aiogram import Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BotCommand, Message
+from aiogram.types import BotCommand, Message, WebAppInfo
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.assistant import Assistant
 from bot.clock import local_to_utc
@@ -12,6 +13,7 @@ from bot.repo import TaskRepo
 router = Router()
 
 COMMANDS = [
+    BotCommand(command="app", description="Open the planner app"),
     BotCommand(command="today", description="Today's tasks + overdue"),
     BotCommand(command="inbox", description="Undated tasks"),
     BotCommand(command="add", description="Add a task step by step"),
@@ -51,6 +53,7 @@ Tasks with a time get a reminder ⏰ with Done / +30 min / +2 h / Tomorrow.
 Every morning you get a plan to accept, every evening a review.
 Unfinished tasks roll over to the next day at midnight.
 
+/app — open the visual planner (also the menu button)
 /today — today + overdue
 /inbox — undated tasks
 /add — guided entry
@@ -85,3 +88,13 @@ async def cmd_ai(message: Message, repo: TaskRepo, today: date, assistant: Assis
     month_start = local_to_utc(today.replace(day=1), time(0), repo.tz)
     calls, cost = await repo.ai_usage_since(month_start)
     await message.answer(f"🤖 Model: <code>{assistant.model}</code>\nThis month: {calls} call(s), ${cost:.4f}")
+
+
+@router.message(Command("app"))
+async def cmd_app(message: Message, webapp_url: str) -> None:
+    if not webapp_url.startswith("https://"):
+        await message.answer("The app needs HTTPS: set DOMAIN (or PUBLIC_URL) first.")
+        return
+    b = InlineKeyboardBuilder()
+    b.button(text="📅 Open planner", web_app=WebAppInfo(url=webapp_url))
+    await message.answer("Your day, week and inbox:", reply_markup=b.as_markup())
