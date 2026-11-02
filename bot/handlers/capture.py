@@ -18,14 +18,18 @@ from aiogram.types import CallbackQuery, Message
 from bot import actions as task_actions
 from bot import planning
 from bot.assistant import (
+    CALENDAR_ACTIONS,
     Assistant,
     AssistantUnavailable,
     CreateAction,
     EventAction,
+    EventDeleteAction,
+    EventUpdateAction,
     PlanDayAction,
     dump_actions,
     load_actions,
 )
+from bot.calendar_edit import EventEditError
 from bot.clock import day_bounds_utc, utcnow
 from bot.db.models import Task, TaskStatus
 from bot.formatting import format_closed, format_task
@@ -131,16 +135,29 @@ async def _with_ai(
         if not actions:
             return True
     if events is None:
-        actions = [a for a in actions if not isinstance(a, EventAction)]
+        actions = [a for a in actions if not isinstance(a, CALENDAR_ACTIONS)]
+    events_by_id = {e.id: e for e in events or []}
+    reply = result.reply
+    kept = []
+    for a in actions:
+        if isinstance(a, EventUpdateAction | EventDeleteAction):
+            event = events_by_id.get(a.event_id)
+            if event is None:
+                continue
+            if not event.editable:
+                reply = (reply + "\n" if reply else "") + f"“{event.title}” can't be changed: you're a guest."
+                continue
+        kept.append(a)
+    actions = kept
     if not actions:
-        if result.reply:
-            await message.reply(escape(result.reply))
+        if reply:
+            await message.reply(escape(reply))
             return True
         return False
 
     # Unambiguous single task actions apply right away; anything else (and every
     # calendar write) gets a preview.
-    single = actions[0] if len(actions) == 1 and not isinstance(actions[0], EventAction) else None
+    single = actions[0] if len(actions) == 1 and not isinstance(actions[0], CALENDAR_ACTIONS) else None
     if isinstance(single, CreateAction) and reply_task is None:
         task = await task_actions.apply(repo, single, today)
         await message.answer(format_task(task, today), reply_markup=task_kb(task))
@@ -152,9 +169,9 @@ async def _with_ai(
         return True
 
     proposal = await repo.create_proposal(dump_actions(actions))
-    labels = [task_actions.describe(a, by_id, today) for a in actions]
+    labels = [task_actions.describe(a, by_id, today, events_by_id) for a in actions]
     await message.answer(
-        task_actions.preview_text(actions, by_id, today, result.reply),
+        task_actions.preview_text(actions, by_id, today, reply, events_by_id),
         reply_markup=proposal_kb(proposal.id, labels, set(proposal.selected)),
     )
     return True
@@ -251,8 +268,12 @@ async def on_proposal(
     actions = load_actions(proposal.actions)
     tasks = await repo.get_many([a.id for a in actions if hasattr(a, "id")])
     by_id = {t.id: t for t in tasks}
-    # Describe before applying: applying renames tasks.
-    labels = [task_actions.describe(a, by_id, today) for a in actions]
+    events_by_id = {}
+    for a in actions:
+        if isinstance(a, EventUpdateAction | EventDeleteAction) and (event := await repo.get_event(a.event_id)):
+            events_by_id[event.id] = event
+    # Describe before applying: applying renames tasks and events.
+    labels = [task_actions.describe(a, by_id, today, events_by_id) for a in actions]
 
     match callback_data.action:
         case "toggle":
@@ -273,6 +294,9 @@ async def on_proposal(
                 if isinstance(action, EventAction):
                     lines.append(escape(await _save_event(gcal, token, action, repo, labels[idx])))
                     continue
+                if isinstance(action, EventUpdateAction | EventDeleteAction):
+                    lines.append(escape(await _edit_event(gcal, token, action, events_by_id, repo, labels[idx])))
+                    continue
                 task = await task_actions.apply(repo, action, today)
                 prefix = "" if task else "⚠️ skipped (task closed): "
                 lines.append(escape(prefix + labels[idx]))
@@ -292,3 +316,23 @@ async def _save_event(gcal: GoogleCalendar | None, token: str, action: EventActi
         log.exception("Creating a calendar event failed")
         return f"⚠️ couldn't create: {label}"
     return label + " (added to Google Calendar)"
+
+
+async def _edit_event(
+    gcal: GoogleCalendar | None,
+    token: str,
+    action: EventUpdateAction | EventDeleteAction,
+    events: dict,
+    repo: TaskRepo,
+    label: str,
+) -> str:
+    event = events.get(action.event_id)
+    if event is None:
+        return f"⚠️ event no longer exists: {label}"
+    if gcal is None or not token:
+        return f"⚠️ calendar not connected: {label}"
+    try:
+        await task_actions.apply_event_edit(repo.session, gcal, token, action, event, repo.tz)
+    except EventEditError as e:
+        return f"⚠️ {e}: {label}"
+    return label + " (updated in Google Calendar)"

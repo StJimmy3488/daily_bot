@@ -143,3 +143,7 @@ class CalendarEvent(Base):
     busy: Mapped[bool] = mapped_column(Boolean, default=True)
     link: Mapped[str | None] = mapped_column(Text)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # False when you're only a guest (or the calendar is read-only): Google won't accept changes.
+    editable: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    recurring: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # one occurrence
+    has_guests: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

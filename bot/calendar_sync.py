@@ -18,7 +18,19 @@ PAST_DAYS = 1
 FUTURE_DAYS = 14
 
 
-def parse_event(item: dict, tz: ZoneInfo) -> dict | None:
+# Event types Google doesn't let you edit through the API (birthdays, Gmail reservations, ...).
+EDITABLE_TYPES = {"default", "outOfOffice", "focusTime"}
+
+
+def can_edit(item: dict, access_role: str) -> bool:
+    """Whether changes are allowed: an editable calendar, and not just invited to someone else's event."""
+    if access_role not in ("owner", "writer") or item.get("eventType", "default") not in EDITABLE_TYPES:
+        return False
+    me_invited = any(a.get("self") and not a.get("organizer") for a in item.get("attendees", []))
+    return not me_invited or item.get("guestsCanModify", False) or item.get("organizer", {}).get("self", False)
+
+
+def parse_event(item: dict, tz: ZoneInfo, access_role: str = "owner") -> dict | None:
     """Google event resource -> CalendarEvent fields, or None if it should be ignored."""
     if item.get("status") == "cancelled":
         return None
@@ -51,6 +63,9 @@ def parse_event(item: dict, tz: ZoneInfo) -> dict | None:
         "all_day": all_day,
         "busy": item.get("transparency") != "transparent",
         "link": item.get("hangoutLink") or video or item.get("htmlLink"),
+        "editable": can_edit(item, access_role),
+        "recurring": "recurringEventId" in item,
+        "has_guests": any(not a.get("self") for a in item.get("attendees", [])),
     }
 
 
@@ -65,7 +80,7 @@ async def sync_calendar(session: AsyncSession, gcal: GoogleCalendar, refresh_tok
         if not (cal.get("selected") or cal.get("primary")):
             continue
         for item in await gcal.list_events(refresh_token, quote(cal["id"], safe=""), window_start, window_end):
-            if fields := parse_event(item, tz):
+            if fields := parse_event(item, tz, cal.get("accessRole", "reader")):
                 fetched[(cal["id"], item["id"])] = fields
 
     existing = {

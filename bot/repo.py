@@ -260,6 +260,9 @@ class TaskRepo:
         )
         return list(await self.session.scalars(stmt))
 
+    async def get_event(self, event_id: int) -> CalendarEvent | None:
+        return await self.session.get(CalendarEvent, event_id)
+
     async def events_on(self, day: date) -> list[CalendarEvent]:
         return await self.events_between(*day_bounds_utc(day, self.tz))
 

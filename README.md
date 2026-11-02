@@ -132,6 +132,8 @@ to crontab: `15 3 * * * cd /opt/planner/daily_bot && ./scripts/backup.sh >> back
 - **Inbox** — undated tasks with one-tap Today / Tomorrow.
 - Tap a task to edit title, day, time, duration, priority, repeat and notes; tick to complete (with
   Undo); **+** adds a task to the day you're looking at.
+- Tap a meeting to rename it, move it to another day or time (the length is kept), change when it
+  ends, delete it, or join its video call. Meetings you're only invited to open read-only.
 
 It follows Telegram's light/dark theme. Every API call is authenticated with Telegram's signed init
 data (HMAC with the bot token), only accepted for `OWNER_ID` and for 24 hours. All changes go through
@@ -170,6 +172,12 @@ when the mute ends. Change times with `/settings` and `/set`.
 (yesterday to +14 days, declined and cancelled events skipped). The morning brief lists meetings
 first, you get a ping 10 min before each meeting with its link (quiet hours apply, focus doesn't),
 and "block 2h for the audit tomorrow" creates an event in your primary calendar after you confirm.
+"Move the design review to 15:00" or "cancel the team lunch" changes or deletes an existing event,
+also after you confirm.
+
+Events can only be changed where Google allows it: on calendars you own or can write to, and not
+when you're just a guest at someone else's meeting (those show as *guest* and stay read-only).
+Changes to a recurring meeting apply to that occurrence; guests get Google's usual update email.
 
 **Smart plan:** `/smartplan`, the brief's 🧠 button or "plan my day". Claude (`AI_PLAN_MODEL`) orders
 today's tasks and estimates durations; a deterministic fitter then places them into free time inside

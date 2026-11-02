@@ -18,6 +18,16 @@ export interface CalendarEvent {
   end: string;
   all_day: boolean;
   link: string | null;
+  editable: boolean; // false when you're only a guest
+  recurring: boolean; // changes apply to this occurrence only
+  has_guests: boolean; // guests get Google's update email
+}
+
+export interface EventPatch {
+  title?: string;
+  start?: string; // local YYYY-MM-DDTHH:MM
+  end?: string;
+  day?: string; // all-day events
 }
 
 export interface Day {

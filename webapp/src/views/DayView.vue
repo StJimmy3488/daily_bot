@@ -5,7 +5,7 @@ import { api } from "../api";
 import PlanPreview from "../components/PlanPreview.vue";
 import TaskRow from "../components/TaskRow.vue";
 import { addDays, dayLabel, shortDay, timeOf } from "../dates";
-import { focusDay, meta, showToast, version } from "../store";
+import { eventSheet, focusDay, meta, showToast, version } from "../store";
 import type { CalendarEvent, DayView, Task } from "../types";
 
 const props = defineProps<{ day: string }>();
@@ -76,7 +76,7 @@ onBeforeUnmount(() => window.clearInterval(clock));
     <p v-if="!data" class="hint loading">Loading…</p>
     <template v-else>
       <div v-if="allDay.length" class="all-day">
-        <span v-for="e in allDay" :key="e.id" class="pill">📅 {{ e.title }}</span>
+        <button v-for="e in allDay" :key="e.id" class="pill" @click="eventSheet = e">📅 {{ e.title }}</button>
       </div>
 
       <div v-if="data.overdue.length" class="group overdue">
@@ -95,16 +95,13 @@ onBeforeUnmount(() => window.clearInterval(clock));
             <div v-if="i === nowIndex" class="now-line"><span>{{ nowTime }}</span></div>
             <div class="slot">
               <div class="slot-time">{{ it.at }}</div>
-              <a
-                v-if="it.kind === 'event'"
-                class="event"
-                :href="it.event.link ?? undefined"
-                target="_blank"
-                rel="noopener"
-              >
+              <button v-if="it.kind === 'event'" class="event" @click="eventSheet = it.event">
                 <span class="title">{{ it.event.title }}</span>
-                <span class="details">{{ it.at }}–{{ it.end }}</span>
-              </a>
+                <span class="details">
+                  {{ it.at }}–{{ it.end }}<template v-if="it.event.recurring"> · ↻</template
+                  ><template v-if="!it.event.editable"> · guest</template>
+                </span>
+              </button>
               <TaskRow v-else :task="it.task" :show-time="false" />
             </div>
           </template>

@@ -46,6 +46,9 @@ in the user's language, using only the context.
 - plan_day when the user asks to plan or schedule their day.
 - create_calendar_event (only when available) when the user explicitly wants time blocked or an \
 event put in their calendar, e.g. "block 2h for the audit tomorrow". Plain to-dos are tasks.
+- update_calendar_event or delete_calendar_event (only when available) when the user wants to \
+move, rename, shorten or cancel an event listed in the calendar context, referring to it by its \
+event id. Events marked (guest) can't be changed: say so instead of calling a tool.
 
 Rules:
 - Titles are short and imperative, in the user's language, without the date or time words.
@@ -135,6 +138,40 @@ TOOLS = [
     },
 ]
 
+EVENT_ID = {"type": "integer", "description": "Event id from the calendar context."}
+
+CALENDAR_EDIT_TOOLS = [
+    {
+        "name": "update_calendar_event",
+        "description": "Move, rename or resize an existing calendar event. Shown to the user for confirmation. "
+        "Empty string or 0 means leave that field unchanged.",
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": EVENT_ID,
+                "title": {"type": "string", "description": "New title, or empty string to keep it."},
+                "date": {"type": "string", "description": f"New date as {_DATE_HELP}, or empty string to keep it."},
+                "start": {"type": "string", "description": "New start time as HH:MM, or empty string to keep it."},
+                "minutes": {"type": "integer", "description": "New duration in minutes, or 0 to keep it."},
+            },
+            "required": ["id", "title", "date", "start", "minutes"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "delete_calendar_event",
+        "description": "Delete (cancel) an existing calendar event. Shown to the user for confirmation.",
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {"id": EVENT_ID},
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+]
+
 CALENDAR_EVENT_TOOL = {
     "name": "create_calendar_event",
     "description": "Block time in the user's Google Calendar. Always shown to the user for confirmation.",
@@ -199,10 +236,33 @@ class EventAction(BaseModel):
     minutes: int = Field(ge=5, le=24 * 60)
 
 
+class EventUpdateAction(BaseModel):
+    kind: Literal["event_update"] = "event_update"
+    event_id: int
+    title: str | None = None
+    day: date | None = None
+    start: time | None = None
+    minutes: int | None = Field(default=None, ge=5, le=24 * 60)
+
+
+class EventDeleteAction(BaseModel):
+    kind: Literal["event_delete"] = "event_delete"
+    event_id: int
+
+
 Action = Annotated[
-    CreateAction | UpdateAction | CompleteAction | DropAction | PlanDayAction | EventAction,
+    CreateAction
+    | UpdateAction
+    | CompleteAction
+    | DropAction
+    | PlanDayAction
+    | EventAction
+    | EventUpdateAction
+    | EventDeleteAction,
     Field(discriminator="kind"),
 ]
+# Actions that change Google Calendar: never applied without the user's confirmation.
+CALENDAR_ACTIONS = (EventAction, EventUpdateAction, EventDeleteAction)
 ACTIONS = TypeAdapter(list[Action])
 
 
@@ -255,6 +315,16 @@ def action_from_tool(name: str, data: dict) -> Action:
                     start=time.fromisoformat(data["start"]),
                     minutes=data["minutes"],
                 )
+            case "update_calendar_event":
+                return EventUpdateAction(
+                    event_id=data["id"],
+                    title=data["title"].strip() or None,
+                    day=_opt_date(data["date"]),
+                    start=_opt_time(data["start"]),
+                    minutes=data["minutes"] or None,
+                )
+            case "delete_calendar_event":
+                return EventDeleteAction(event_id=data["id"])
     except (KeyError, TypeError, ValueError, ValidationError) as e:
         raise ValueError(f"bad {name} input {data!r}: {e}") from e
     raise ValueError(f"unknown tool {name}")
@@ -357,8 +427,12 @@ def build_context(
     if not tasks:
         lines.append("(none)")
     if events is not None:
-        lines += ["", "Calendar, next 7 days:"]
-        lines += [_event_line(e, now.tzinfo) for e in events] or ["(no events)"]
+        lines += ["", "Calendar, next 7 days (event id | when | title):"]
+        for e in events:
+            guest = " (guest)" if not e.editable else ""
+            lines.append(f"{e.id} | {_event_line(e, now.tzinfo)}{guest}")
+        if not events:
+            lines.append("(no events)")
     if reply_to is not None:
         lines += ["", f"The user is replying to task {reply_to.id}."]
     return "\n".join(lines)
@@ -385,7 +459,7 @@ class Assistant:
                 model=self.model,
                 max_tokens=8000,
                 system=SYSTEM_PROMPT,
-                tools=TOOLS if events is None else [*TOOLS, CALENDAR_EVENT_TOOL],
+                tools=TOOLS if events is None else [*TOOLS, CALENDAR_EVENT_TOOL, *CALENDAR_EDIT_TOOLS],
                 output_config={"effort": "low"},
                 messages=[{"role": "user", "content": content}],
             )
